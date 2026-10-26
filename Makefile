@@ -13,9 +13,10 @@ $(TARGET): src/dpdp.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(JSON_CFLAGS) -o $@ $< $(LDFLAGS) $(JSON_LIBS)
 test: $(TARGET)
 	bash tests/smoke.sh
+	bash tests/sleep_states.sh
 sanitize:
 	$(MAKE) clean
 	$(MAKE) CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wpedantic' LDFLAGS='-fsanitize=address,undefined'
-	bash tests/smoke.sh
+	$(MAKE) test
 clean:
 	rm -rf build

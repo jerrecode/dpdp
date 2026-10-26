@@ -387,7 +387,7 @@ int main(int argc,char **argv) {
     if(!cfg.iface[0] || if_nametoindex(cfg.iface)==0){message("warning","interface absent; daemon will poll until it appears");}
     load_old_peers();
     for(unsigned i=0;i<peer_count;i++)sync_registry(&peers[i]);
-    signal(SIGINT,stop_handler);signal(SIGTERM,stop_handler);signal(SIGCHLD,SIG_IGN);
+    signal(SIGINT,stop_handler);signal(SIGTERM,stop_handler);signal(SIGCHLD,SIG_DFL);
     message("started",cfg.name);
     uint64_t next_check=0,next_announce=0;int state=-1;
     while(!stopping) {
@@ -416,6 +416,9 @@ int main(int argc,char **argv) {
             int delay=next_check>current?(int)(next_check-current):0;
             poll(NULL,0,delay);
         }
+        /* Service hooks are child processes. Reap them only outside popen/pclose,
+           so the Termux API subprocess still has a waitable exit status. */
+        while(waitpid(-1,NULL,WNOHANG)>0) {}
     }
     close_socket();message("stopped",cfg.name);return 0;
 }

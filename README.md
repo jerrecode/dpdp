@@ -142,7 +142,7 @@ Editing `peers.json` by writing a replacement in place can race with the daemon.
 
 ```sh
 make                 # C compiler, make, pkg-config and json-c required
-make test            # two local daemon processes on an active IPv4 interface; requires Python 3 for test assertions
+make test            # two local daemon processes plus mocked Android SSID states; requires Python 3 for registry assertions
 make sanitize        # ASan/UBSan build and smoke test
 bash scripts/install.sh update           # git pull --ff-only + rebuild + reinstall
 bash scripts/install.sh uninstall        # preserves config, identity, peer registry
