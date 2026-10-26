@@ -1,0 +1,8 @@
+build/
+*.o
+*.tmp
+*.log
+peers.json
+peers.json.lock
+*.id
+__pycache__/
