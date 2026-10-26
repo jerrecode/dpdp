@@ -405,9 +405,17 @@ int main(int argc,char **argv) {
         }
         if(fd>=0 && now>=next_announce){send_packet('Q',NULL);send_packet('A',NULL);next_announce=mono_ms()+(uint64_t)cfg.announce_s*1000;}
         mark_lost();
-        int timeout=1000;
-        if(fd>=0){struct pollfd pfd={.fd=fd,.events=POLLIN};int rc=poll(&pfd,1,timeout);if(rc>0 && (pfd.revents&POLLIN))recv_one();}
-        else poll(NULL,0,timeout);
+        if(fd>=0){
+            struct pollfd pfd={.fd=fd,.events=POLLIN};
+            int rc=poll(&pfd,1,1000);
+            if(rc>0 && (pfd.revents&POLLIN))recv_one();
+        } else {
+            /* Truly sleep through the disconnected interval instead of waking
+               every second. SIGINT/SIGTERM interrupt this sleep promptly. */
+            uint64_t current=mono_ms();
+            int delay=next_check>current?(int)(next_check-current):0;
+            poll(NULL,0,delay);
+        }
     }
     close_socket();message("stopped",cfg.name);return 0;
 }
