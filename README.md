@@ -6,7 +6,7 @@ A small, decentralized **C** daemon for recognizing machines on the same IPv4 mu
 
 ## How it works
 
-- Every installation gets a random 128-bit persistent node ID, stored as `<config file>.id` (mode 0600). That ID, **not a DHCP address**, is the peer identity.
+- Every installation gets a random 128-bit persistent node ID, stored as `<config file>.id` (mode 0600). Concurrent initializers use an advisory `<config file>.id.lock` to agree on one ID. Existing invalid or unreadable identities are preserved and initialization fails for operator recovery. That ID, **not a DHCP address**, is the peer identity.
 - DPDP periodically multicasts short query/announcement messages to `239.255.77.81:47981` (TTL 1). Queries are answered with unicast announcements. Responses are processed only on the selected network interface using Linux `IP_PKTINFO`. The IP address in the registry comes from the actual UDP packet source, not untrusted payload text.
 - A changing interface address causes the daemon to reopen its bound discovery socket and announce again. Periodic discovery also recovers after **both peers** change addresses simultaneously.
 - Peers become offline when no packets arrive for the configured timeout. The registry retains their identity, last endpoint, and **all locally edited metadata**.
@@ -118,7 +118,7 @@ The registry is automatically created, even with no peers. After discovery, it l
 }
 ```
 
-Peer keys normally match peer-advertised names. If names collide, DPDP adds an abbreviated identity suffix. Names can change; IDs remain stable. If you edit the registry, do not change IDs or the machine-managed `name`, `ip`, `online`, and `last_seen_unix` fields. Add services like:
+Peer keys normally match peer-advertised names. If names collide, DPDP adds the full identity as a suffix and, if necessary, a numeric suffix to select a free key. Existing keys are labels, never authorization identifiers. Names can change; IDs remain stable. If you edit the registry, do not change IDs or the machine-managed `name`, `ip`, `online`, and `last_seen_unix` fields. Add services like:
 
 ```json
 "trusted": true,
@@ -142,8 +142,9 @@ Editing `peers.json` by writing a replacement in place can race with the daemon.
 
 ```sh
 make                 # C compiler, make, pkg-config and json-c required
+make unit-test       # registry, identity concurrency and packet parsing; no network required
 make test            # two local daemon processes plus mocked Android SSID states; requires Python 3 for registry assertions
-make sanitize        # ASan/UBSan build and smoke test
+make sanitize        # ASan/UBSan build of daemon AND tests, then full suite
 bash scripts/install.sh update           # git pull --ff-only + rebuild + reinstall
 bash scripts/install.sh uninstall        # preserves config, identity, peer registry
 ```

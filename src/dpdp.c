@@ -128,25 +128,28 @@ static int sync_registry(peer_t *p) {
         all=json_object_new_object(); json_object_object_add(root,"peers",all);
     }
     if(p) {
-        char key[96]={0}; struct json_object *item=NULL;
-        json_object_object_foreach(all,k,v) {if (!strcmp(str_field(v,"id"),p->id)){copy(key,sizeof key,k);break;}}
-        if(!key[0]) {
-            copy(key,sizeof key,p->name);
-            if(obj_field(all,key)) snprintf(key,sizeof key,"%.48s-%.8s",p->name,p->id);
+        const char *old_key=NULL; struct json_object *item=NULL;
+        json_object_object_foreach(all,k,v) {
+            if(!strcmp(str_field(v,"id"),p->id)){old_key=k;item=v;break;}
         }
-        item=obj_field(all,key);
-        /* Keep the reported-name key current while preserving user-owned fields. */
-        char desired[96];copy(desired,sizeof desired,p->name);
-        struct json_object *collision=obj_field(all,desired);
-        if(collision && strcmp(str_field(collision,"id"),p->id))
-            snprintf(desired,sizeof desired,"%.48s-%.8s",p->name,p->id);
-        if(item && strcmp(key,desired)) {
-            json_object_object_add(all,desired,json_object_get(item));
-            json_object_object_del(all,key);
-            item=obj_field(all,desired);
+        /* Labels are presentation only. Never reuse an occupied key belonging
+           to another identity, even if it is null or uses our full-ID suffix. */
+        char desired[112];copy(desired,sizeof desired,p->name);
+        struct json_object *collision=NULL;
+        unsigned suffix=0;
+        while(json_object_object_get_ex(all,desired,&collision) &&
+              (!old_key || strcmp(old_key,desired))) {
+            if(suffix==0)snprintf(desired,sizeof desired,"%s-%s",p->name,p->id);
+            else snprintf(desired,sizeof desired,"%s-%s-%u",p->name,p->id,suffix);
+            suffix++;
         }
-        if(!item || !json_object_is_type(item,json_type_object)) {
-            item=json_object_new_object(); json_object_object_add(all,key,item);
+        if(item) {
+            if(strcmp(old_key,desired)) {
+                json_object_object_add(all,desired,json_object_get(item));
+                json_object_object_del(all,old_key);
+            }
+        } else {
+            item=json_object_new_object();json_object_object_add(all,desired,item);
         }
         set_string(item,"id",p->id); set_string(item,"name",p->name); set_string(item,"ip",p->ip);
         set_bool(item,"online",p->online);
@@ -199,7 +202,7 @@ static int start_services(peer_t *p) {
     }
     json_object_put(root); return launches;
 }
-static int ensure_identity(void) {
+static int ensure_identity_locked(void) {
     char file[560];snprintf(file,sizeof file,"%s.id",cfg.config);
     char *existing=read_file(file);
     if(existing){ char *nl=strchr(existing,'\n');if(nl)*nl=0;
@@ -207,12 +210,27 @@ static int ensure_identity(void) {
         free(existing);if(cfg.id[0])return 0;
         message("error","invalid existing identity; refusing to replace");return -1;
     }
+    /* A read failure is not permission to replace an existing identity. */
+    struct stat st;
+    if(lstat(file,&st)==0 || errno!=ENOENT) {
+        message("error","existing identity is unreadable; refusing to replace");return -1;
+    }
     unsigned char b[16]; int randomfd=open("/dev/urandom",O_RDONLY); if(randomfd<0)return -1;
     ssize_t got=read(randomfd,b,sizeof b);close(randomfd);if(got!=(ssize_t)sizeof b)return -1;
     for(int i=0;i<16;i++)snprintf(cfg.id+i*2,3,"%02x",b[i]);
     char s[40];snprintf(s,sizeof s,"%s\n",cfg.id);
     if(write_atomic(file,s,strlen(s))<0)return -1;
     return 0;
+}
+static int ensure_identity(void) {
+    char lockpath[560];snprintf(lockpath,sizeof lockpath,"%s.id.lock",cfg.config);
+    if(ensure_parent(lockpath))return -1;
+    int lock=open(lockpath,O_CREAT|O_RDWR|O_CLOEXEC|O_NOFOLLOW,0600);
+    if(lock<0)return -1;
+    if(flock(lock,LOCK_EX)<0){close(lock);return -1;}
+    cfg.id[0]=0;
+    int rc=ensure_identity_locked();
+    flock(lock,LOCK_UN);close(lock);return rc;
 }
 static void defaults(void) {
     memset(&cfg,0,sizeof cfg);
@@ -298,13 +316,19 @@ static void send_packet(char type,const struct sockaddr_in *dest) {
     if(sendto(fd,buf,(size_t)n,0,(struct sockaddr*)&to,sizeof to)<0 && debug_mode)perror("sendto");
 }
 static int parse_packet(char *buf,size_t n,char *kind,char id[33],char name[49]) {
-    if(n<45 || n>=MAX_PACKET)return -1;
+    if(n<45 || n>=MAX_PACKET || memchr(buf,0,n))return -1;
     buf[n]=0;
-    char *parts[5],*save=NULL,*p=strtok_r(buf,"|",&save);
-    for(int i=0;i<5;i++){if(!p)return -1;parts[i]=p;p=strtok_r(NULL,"|",&save);}
-    if(p||strcmp(parts[0],"DPDP/1") || strlen(parts[1])!=1 || (parts[1][0]!='A' && parts[1][0]!='Q') ||
-       !valid_id(parts[2]) || !valid_label(parts[3],48) || !parts[4][0])return -1;
+    char *parts[5];parts[0]=buf;
+    for(int i=0;i<4;i++) {
+        char *separator=strchr(parts[i],'|');
+        if(!separator)return -1;
+        *separator=0;parts[i+1]=separator+1;
+    }
+    if(strchr(parts[4],'|') || strcmp(parts[0],"DPDP/1") || strlen(parts[1])!=1 ||
+       (parts[1][0]!='A' && parts[1][0]!='Q') || !valid_id(parts[2]) ||
+       !valid_label(parts[3],48) || !parts[4][0])return -1;
     for(char *q=parts[4];*q;q++)if(*q<'0'||*q>'9')return -1;
+    errno=0;strtoull(parts[4],NULL,10);if(errno==ERANGE)return -1;
     *kind=parts[1][0];copy(id,33,parts[2]);copy(name,49,parts[3]);return 0;
 }
 static peer_t *upsert(const char *id,const char *name,const char *ip) {
