@@ -15,3 +15,5 @@ jobs:
         run: bash -n scripts/install.sh scripts/diagnose.sh tests/smoke.sh tests/sleep_states.sh
       - name: Integration test
         run: make test
+      - name: Address and undefined behavior sanitizers
+        run: make sanitize

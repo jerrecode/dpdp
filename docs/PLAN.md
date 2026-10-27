@@ -10,6 +10,15 @@
 - [x] Debian systemd user startup/linger attempt, Termux:Boot entry, Termux SSID-based 60 s/15 s sleep states.
 - [x] Local two-process integration test and GitHub Actions Linux build/test.
 
+## October 27, 2026 hardening increment
+
+- [x] Reproduce and fix registry name/suffix collisions transferring another peer's metadata and authorization; cover three equal names/shared eight-character ID prefixes, occupied rename destinations, null entries and long operator keys.
+- [x] Serialize first-start identity creation using an advisory identity lock; concurrent initializers reuse one ID and read failures cannot replace existing identities.
+- [x] Reject malformed protocol fields, embedded NUL suffixes and overflowing sequence numbers.
+- [x] Add network-independent C regression tests and instrument every binary in `make sanitize`; run full sanitizers in CI.
+
+These changes do not authenticate IDs. Issue #1 remains the highest security priority. Issues #2–#4 also remain open.
+
 ## Priority 1: security and reliability before untrusted LAN deployment
 
 - [ ] Cryptographic device keys and authenticated signed announcements, replay-resistant handshake.
