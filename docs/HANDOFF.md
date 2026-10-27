@@ -60,10 +60,12 @@ passed locally. Existing registry/protocol/identity tests remain.
 
 Local full integration was limited by interface enumeration restrictions; ASan/UBSan
 unit checks used ASAN_OPTIONS=detect_leaks=0 because /proc inspection is blocked here.
-Early draft CI failures were real (missing dependencies initially, then the UNKNOWN
-PEM reload defect); do not report those drafts as passed. Check the latest PR run for
+Early draft CI failures were real (missing dependencies initially, the UNKNOWN
+PEM reload defect, and same-IP SO_REUSEPORT unicast demultiplexing); do not report those drafts as passed. Check the latest PR run for
 full normal/TCP/UDP and sanitizer evidence. CI uses default leak detection.
-No physical Debian/Android tests occurred. Access unit tests use controlled SSH
+No physical Debian/Android tests occurred. Distinct-IP namespace tests additionally
+exercise multicast reception loss, one-sided and simultaneous address changes;
+inspect their latest CI results before claiming success. Access unit tests use controlled SSH
 executables; tests/ssh_transport.py additionally starts an isolated real Linux sshd
 in CI and exercises native helpers, pinned SSH, shared masters, SFTP and binary
 file round trips. Inspect its latest CI step before claiming it passed. Physical

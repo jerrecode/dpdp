@@ -79,7 +79,10 @@ for packet freshness. The recent CLI endpoint cache additionally expires after
 Q/U signatures do not prove fresh endpoint reachability. They trigger bounded
 answers/challenges, never authorize services directly. U is sent from the new
 address to remembered peer addresses and multicast as fallback. Periodic multicast
-also recovers simultaneous address changes and missed hints. Both multicast and
+also recovers simultaneous address changes and missed hints. Paired endpoints
+receive periodic unicast challenges too, keeping authentication alive if multicast
+reception is lost after discovery. Stable endpoint timestamps are persisted at
+most every 30 seconds, while in-memory proof/liveness checks remain current. Both multicast and
 unicast sends use `sendmsg(IP_PKTINFO)` to select source IP **and** interface;
 `IP_MULTICAST_IF` alone would not constrain unicast replies on a dual-NIC PC.
 Receive-side IP_PKTINFO filters other interfaces. Control buffers are aligned.

@@ -804,21 +804,40 @@ static void send_secure(char kind, const char *echo, const struct sockaddr_in *d
         inet_pton(AF_INET, GROUP, &to.sin_addr);
     send_selected(wire, (size_t)n, &to);
 }
+static void send_paired(char kind) {
+    struct json_object *root = sec_pairs(&security), *all = obj_field(root, "peers");
+    if (all && json_object_is_type(all, json_type_object)) {
+        json_object_object_foreach(all, k, v) {
+            (void)k;
+            if (json_object_get_boolean(obj_field(v, "revoked")) ||
+                json_object_get_boolean(obj_field(v, "pending")))
+                continue;
+            const char *id = str_field(v, "id"), *last = str_field(v, "last_ip");
+            if (!valid_id(id))
+                continue;
+            if (!last[0])
+                for (unsigned i = 0; i < peer_count; i++)
+                    if (!strcmp(peers[i].id, id)) {
+                        last = peers[i].ip;
+                        break;
+                    }
+            struct sockaddr_in to = {.sin_family = AF_INET, .sin_port = htons((uint16_t)cfg.port)};
+            if (inet_pton(AF_INET, last, &to.sin_addr) == 1)
+                send_secure(kind, "-", &to);
+        }
+    }
+    if (root)
+        json_object_put(root);
+}
 static void changed_address_hints(void) {
-    /* Called after binding the new address, so signatures and packet metadata agree. */
+    /* The new signed source address reaches remembered peers even if multicast
+       is temporarily filtered; every hint still requires a fresh endpoint proof. */
     if (sec_challenge(&security))
         return;
-    for (unsigned i = 0; i < peer_count; i++) {
-        struct json_object *paired = sec_find(&security, peers[i].id);
-        if (!paired)
-            continue;
-        json_object_put(paired);
-        struct sockaddr_in to = {.sin_family = AF_INET, .sin_port = htons((uint16_t)cfg.port)};
-        if (inet_pton(AF_INET, peers[i].ip, &to.sin_addr) == 1)
-            send_secure('U', "-", &to);
-    }
+    send_paired('U');
     send_secure('U', "-", NULL);
     send_secure('Q', "-", NULL);
+    send_paired('Q');
 }
 static void recv_one(void) {
     char buf[MAX_PACKET + 1];
@@ -1226,8 +1245,10 @@ int main(int argc, char **argv) {
             next_announce = mono_ms() + (uint64_t)cfg.announce_s * 1000;
         }
         if (fd >= 0 && mono_ms() >= next_secure) {
-            if (sec_challenge(&security) == 0)
+            if (sec_challenge(&security) == 0) {
                 send_secure('Q', "-", NULL);
+                send_paired('Q');
+            }
             next_secure = mono_ms() + (cfg.announce_s < 15 ? cfg.announce_s : 15) * 1000;
         }
         mark_lost();

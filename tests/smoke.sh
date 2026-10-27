@@ -73,3 +73,6 @@ PY
 test -f "$TEMP/hook.log"
 test "$(wc -l < "$TEMP/hook.log")" -eq 1
 printf 'OK: local logical nodes pair and authenticate; distinct-IP recovery is also tested in namespaces\n'
+# Explicit code-authenticated repair must contact the server even with local pins.
+python3 "$ROOT/tests/pair_cli.py" "$DPDP" "$TEMP/a/config" "$TEMP/b/config" smoke-b
+printf 'OK: explicit pairing retry completes with already pinned identities\n'

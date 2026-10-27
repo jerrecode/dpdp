@@ -79,6 +79,15 @@ DPDP_CLIENT_NS="$NSA" DPDP_SERVER_NS="$NSB" python3 "$ROOT/tests/pair_cli.py" "$
 wait_state 10.77.0.1 10.77.0.2 yes
 for i in {1..30};do [[ -f "$TEMP/hook.log" ]] && break;sleep 0.1;done
 [[ $(wc -l < "$TEMP/hook.log") == 1 ]]
+# Once paired, unicast challenges preserve liveness when multicast reception is lost.
+for ns in "$NSA" "$NSB";do
+ sudo -n ip netns exec "$ns" iptables -I INPUT -p udp -d 239.255.77.81 --dport 47981 -j DROP
+done
+sleep 12
+wait_state 10.77.0.1 10.77.0.2 yes
+for ns in "$NSA" "$NSB";do
+ sudo -n ip netns exec "$ns" iptables -D INPUT -p udp -d 239.255.77.81 --dport 47981 -j DROP
+done
 sudo -n ip -n "$NSA" address delete 10.77.0.1/24 dev eth0
 sudo -n ip -n "$NSA" address add 10.77.0.3/24 dev eth0
 wait_state 10.77.0.3 10.77.0.2 yes

@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libjson-c-dev libgnutls28-dev cmake git pkg-config make gcc g++ openssh-client openssh-server python3 iproute2
+        run: sudo apt-get update && sudo apt-get install -y libjson-c-dev libgnutls28-dev cmake git pkg-config make gcc g++ openssh-client openssh-server python3 iproute2 iptables
       - name: Build
         run: make
       - name: Validate installer syntax

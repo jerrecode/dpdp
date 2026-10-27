@@ -520,12 +520,21 @@ int sec_record_endpoint(sec_ctx *s, const sec_frame *f) {
     struct json_object *o = sec_pairs(s), *p = find_in(o, f->id, 0);
     int rc = -1;
     if (p) {
+        struct json_object *saved = NULL;
+        json_object_object_get_ex(p, "last_verified_unix", &saved);
+        int64_t age = (int64_t)time(NULL) - json_object_get_int64(saved);
+        if (!strcmp(sec_str(p, "last_ip"), f->ip) && !strcmp(sec_str(p, "name"), f->name) &&
+            age >= 0 && age < 30) {
+            rc = 0;
+            goto endpoint_done;
+        }
         json_object_object_add(p, "name", json_object_new_string(f->name));
         json_object_object_add(p, "last_ip", json_object_new_string(f->ip));
         json_object_object_add(p, "last_verified_unix", json_object_new_int64(time(NULL)));
         const char *encoded = json_object_to_json_string_ext(o, JSON_C_TO_STRING_PRETTY);
         rc = sec_atomic(path, encoded, strlen(encoded));
     }
+endpoint_done:
     if (o)
         json_object_put(o);
     flock(lock, LOCK_UN);
