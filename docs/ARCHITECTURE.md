@@ -38,6 +38,11 @@ symlinks, non-regular files, foreign ownership and permissive file modes.
    silently clear a successful revocation. Matching-key retries recover partial
    enrollment; different keys cannot overwrite an existing pin.
 
+Enrollment imports only identity/SSH fields and locally assigned transaction
+fields. It preserves existing local extensions and clears cached endpoint state;
+a peer cannot import its own `last_ip`, verification timestamp or authorization
+flags. Fresh signed discovery proof is required after enrollment.
+
 Handshake, PAKE and application records share one absolute ten-second deadline,
 clamped to the remaining listener window. Record sizes are capped at 8192 bytes.
 Secret material is not passed through argv/environment. The temporary code is

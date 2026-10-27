@@ -21,7 +21,35 @@ int main(void) {
     assert(!strcmp(saved_pub, a.public_hex));
     struct json_object *ai = sec_identity(&a), *bi = sec_identity(&b);
     assert(ai && bi);
+    /* Enrollment data must never import remote assertions of endpoint verification. */
+    json_object_object_add(bi, "last_ip", json_object_new_string("192.0.2.99"));
+    json_object_object_add(bi, "last_verified_unix", json_object_new_int64(9999999999LL));
+    json_object_object_add(bi, "trusted", json_object_new_boolean(1));
     assert(sec_pin(&a, bi) == 0 && sec_pin(&b, ai) == 0);
+    struct json_object *pinned = sec_find(&a, b.id), *unexpected = NULL;
+    assert(pinned);
+    assert(!json_object_object_get_ex(pinned, "last_ip", &unexpected));
+    assert(!json_object_object_get_ex(pinned, "last_verified_unix", &unexpected));
+    assert(!json_object_object_get_ex(pinned, "trusted", &unexpected));
+    json_object_put(pinned);
+    /* Re-enrollment preserves local extensions but requires a fresh endpoint proof. */
+    struct json_object *store = sec_pairs(&a), *peers = NULL, *entry = NULL;
+    assert(json_object_object_get_ex(store, "peers", &peers));
+    assert(json_object_object_get_ex(peers, b.id, &entry));
+    json_object_object_add(entry, "local_note", json_object_new_string("keep"));
+    json_object_object_add(entry, "last_ip", json_object_new_string("192.0.2.2"));
+    json_object_object_add(entry, "last_verified_unix", json_object_new_int64(123));
+    char pairs_path[560];
+    snprintf(pairs_path, sizeof pairs_path, "%s.paired.json", aconf);
+    const char *encoded = json_object_to_json_string_ext(store, JSON_C_TO_STRING_PLAIN);
+    assert(sec_atomic(pairs_path, encoded, strlen(encoded)) == 0);
+    json_object_put(store);
+    assert(sec_pin(&a, bi) == 0);
+    pinned = sec_find(&a, b.id);
+    assert(pinned && !strcmp(sec_str(pinned, "local_note"), "keep"));
+    assert(!json_object_object_get_ex(pinned, "last_ip", &unexpected));
+    assert(!json_object_object_get_ex(pinned, "last_verified_unix", &unexpected));
+    json_object_put(pinned);
     char wire[SEC_PACKET];
     sec_frame f;
     assert(sec_challenge(&a) == 0 && sec_challenge(&b) == 0);

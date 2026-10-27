@@ -8,6 +8,7 @@
 - [x] Six-digit SPAKE2 pairing via pinned upstream BoringSSL, followed by TLS1.3 with the high-entropy derived PSK and exporter-bound mutual key proofs.
 - [x] Foreground Debian code display / Termux input, interactive pair-watch, bounded 120-second/three-attempt window and absolute exchange deadline.
 - [x] Pending enrollment recovery, conflicting-key rejection, serialized commit/grant and revocation-epoch protection against in-flight reauthorization.
+- [x] Enrollment allowlist excludes remote endpoint/authorization assertions, preserves local extensions and requires fresh endpoint proof after pairing.
 - [x] Signed nonce-bound/source-IP-bound endpoint proofs, replay/duplicate rejection and signed unicast address-change hints with multicast fallback.
 - [x] Explicit unicast source/interface selection through IP_PKTINFO; paired-state priority over unverified table entries; bounded packet/reply work.
 - [x] Legacy discovery is informational only: no unauthorized hooks or replacement of verified addresses.
@@ -16,6 +17,7 @@
 - [x] Single daemon per config; at most eight SSH workers and 32 hook children; Debian update restarts its user service.
 - [x] Debian USB Wi-Fi/NetworkManager selection, no-default-route profile cloning, systemd/linger; Termux Boot/API and fail-closed SSID sleep policy.
 - [x] Native regression suites, real PAKE/TLS streams, real TCP pairing CLI + UDP integration tests, unicast source test, runtime lock and ASan/UBSan CI wiring.
+- [x] Real isolated SSH/SFTP binary transfers and two-namespace multicast-loss/one-sided/simultaneous address-change tests, both normal and sanitized.
 
 Implementation checkboxes describe code delivered by PR #6; final merge/CI evidence
 must be read from the actual PR and Actions state, not inferred from this checklist.
@@ -36,7 +38,7 @@ must be read from the actual PR and Actions state, not inferred from this checkl
 - [ ] Android Wi-Fi permission/multicast delivery, SSID transitions, Doze/termination and measured power usage.
 - [ ] NetworkManager profile idempotence, exclusion of managed clones, rollback/dry-run and adapter renaming tests.
 - [ ] IPv6, scoped link-local endpoints, netlink subscriptions with reconciliation and optional mDNS/DNS-SD interoperability.
-- [ ] Multi-interface network namespace/loss/reordering tests beyond selected-source regression coverage.
+- [ ] Expand namespace coverage to multiple interfaces, asymmetric loss and packet reordering.
 - [ ] CPU/memory/packet/battery benchmarks and signed release packaging to avoid large first-build dependencies on phones.
 
 All four original issues remain open until their full acceptance criteria are met.

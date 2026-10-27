@@ -382,11 +382,28 @@ int sec_pin(sec_ctx *s, struct json_object *identity) {
             goto done;
     } else if (json_object_object_length(all) >= SEC_LIMIT)
         goto done;
-    struct json_object *entry = NULL;
-    const char *encoded = json_object_to_json_string_ext(identity, JSON_C_TO_STRING_PLAIN);
-    entry = sec_json(encoded, strlen(encoded));
+    /* Preserve existing local extensions, but import only enrollment fields.
+       A signed remote object cannot assert locally verified endpoint state. */
+    struct json_object *entry = json_object_new_object();
+    const char *encoded;
+    if (old) {
+        json_object_put(entry);
+        encoded = json_object_to_json_string_ext(old, JSON_C_TO_STRING_PLAIN);
+        entry = sec_json(encoded, strlen(encoded));
+    }
     if (!entry)
         goto done;
+    const char *fields[] = {"id", "name", "public_key", "ssh_client", "ssh_host", "ssh_user",
+                            "ssh_port", "pending", "pairing_token", "enrollment_epoch"};
+    for (size_t i = 0; i < sizeof fields / sizeof fields[0]; i++) {
+        struct json_object *value = NULL;
+        json_object_object_del(entry, fields[i]);
+        if (json_object_object_get_ex(identity, fields[i], &value))
+            json_object_object_add(entry, fields[i], json_object_get(value));
+    }
+    json_object_object_del(entry, "last_ip");
+    json_object_object_del(entry, "last_verified_unix");
+    json_object_object_add(entry, "version", json_object_new_int(1));
     json_object_object_add(entry, "revoked", json_object_new_boolean(0));
     json_object_object_add(all, id, entry);
     encoded = json_object_to_json_string_ext(o, JSON_C_TO_STRING_PRETTY);

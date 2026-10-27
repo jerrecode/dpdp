@@ -46,6 +46,10 @@ implemented by DPDP. See architecture and design/plan documents for exact framin
   temporary suffix. Hash full identity/endpoint and keep full-ID owner sidecars.
 - Unverified table entries could crowd out paired devices; verified pairings may
   replace unverified memory entries without deleting persistent user metadata.
+- Enrollment used to copy arbitrary signed remote JSON, including locally owned
+  endpoint state. Import an explicit identity/SSH allowlist, preserve existing local
+  extensions and clear cached endpoint verification until a fresh proof arrives.
+  Regression tests reject supplied endpoints/timestamps/authorization flags.
 
 ## Validation / how to reproduce
 
@@ -63,6 +67,10 @@ unit checks used ASAN_OPTIONS=detect_leaks=0 because /proc inspection is blocked
 Early draft CI failures were real (missing dependencies initially, the UNKNOWN
 PEM reload defect, and same-IP SO_REUSEPORT unicast demultiplexing); do not report those drafts as passed. Check the latest PR run for
 full normal/TCP/UDP and sanitizer evidence. CI uses default leak detection.
+CI run 40500319089 at 5b911fcab87e01b3a02e186ecda19de124293634 passed all
+normal and sanitized tests, including real SSH/SFTP and namespace multicast-loss,
+one-sided and simultaneous address changes. The subsequent enrollment allowlist
+fix requires checking its own final PR CI run before merging.
 No physical Debian/Android tests occurred. Distinct-IP namespace tests additionally
 exercise multicast reception loss, one-sided and simultaneous address changes;
 inspect their latest CI results before claiming success. Access unit tests use controlled SSH
