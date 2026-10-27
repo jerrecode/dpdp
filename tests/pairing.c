@@ -47,6 +47,14 @@ int main(void) {
     assert(v);
     json_object_put(v);
     exchange(&a, &b, 1);
+    /* A peer that never sends a PAKE message cannot hold the window forever. */
+    int stalled[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, stalled) == 0);
+    uint64_t start = sec_now();
+    assert(sec_pair_fd(&a, stalled[0], 1, "012345", NULL) < 0);
+    assert(sec_now() - start >= 9000 && sec_now() - start < 14000);
+    close(stalled[0]);
+    close(stalled[1]);
     sec_free(&a);
     sec_free(&b);
     puts("OK: real SPAKE2/TLS1.3 wrong-code rejection, mutual pinning and idempotent retry");

@@ -1,5 +1,6 @@
 #include "../src/security.h"
 #include <assert.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,8 +11,8 @@ static void invoke(sec_ctx *s, const char *id) {
     pid_t p = fork();
     assert(p >= 0);
     if (!p) {
-        access_command(s, "master", id, 0, NULL);
-        _exit(1);
+        int rc = access_command(s, "master", id, 0, NULL);
+        _exit(rc ? 1 : 0);
     }
     int st;
     assert(waitpid(p, &st, 0) == p && WIFEXITED(st) && WEXITSTATUS(st) == 0);
@@ -84,7 +85,42 @@ int main(void) {
     char *second = sec_read(path);
     assert(second && !strstr(second, oldcontrol));
     free(second);
+    /* A helper with no control socket is still stopped by pairing supervision. */
+    snprintf(path, sizeof path, "%s/bin/ssh", dir);
+    const char *hold = "#!/bin/sh\nprintf '%s\\n' started >> \"$SSH_TEST_LOG\"\nexec sleep 30\n";
+    assert(sec_atomic(path, hold, strlen(hold)) == 0);
+    assert(chmod(path, 0700) == 0);
+    snprintf(path, sizeof path, "%s/args", dir);
+    assert(sec_atomic(path, "", 0) == 0);
+    pid_t running = fork();
+    assert(running >= 0);
+    if (running == 0) {
+        int rc = access_command(&a, "master", b.id, 0, NULL);
+        _exit(rc ? 1 : 0);
+    }
+    for (unsigned i = 0; i < 100; i++) {
+        char *log = sec_read(path);
+        int started = log && strstr(log, "started");
+        free(log);
+        if (started)
+            break;
+        usleep(20000);
+    }
     assert(sec_unpair(&a, b.id) == 0);
+    int result = 0;
+    uint64_t until = sec_now() + 5000;
+    pid_t reaped;
+    do {
+        reaped = waitpid(running, &result, WNOHANG);
+        if (!reaped)
+            usleep(20000);
+    } while (!reaped && sec_now() < until);
+    if (!reaped) {
+        kill(running, SIGKILL);
+        waitpid(running, &result, 0);
+    }
+    assert(reaped == running && WIFEXITED(result) && WEXITSTATUS(result) == 1);
+
     snprintf(path, sizeof path, "%s/.ssh/authorized_keys", dir);
     keys = sec_read(path);
     assert(keys && !*keys);

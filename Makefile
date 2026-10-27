@@ -30,13 +30,15 @@ build/%-test: tests/%.c src/dpdp.c src/security.h $(SEC_OBJ) $(PAKE_LIB)
 	@mkdir -p build/obj
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(JSON_CFLAGS) -c $< -o build/obj/test-$*.o
 	$(CXX) -o $@ build/obj/test-$*.o $(SEC_OBJ) $(PAKE_LIB) $(LDFLAGS) $(JSON_LIBS) -pthread
-unit-test: $(TESTS:%=build/%-test)
+unit-test: $(TARGET) $(TESTS:%=build/%-test)
 	@set -e; for name in $(TESTS); do ./build/$$name-test; done
-test: $(TARGET) unit-test
+	bash tests/runtime_lock.sh
+test: $(TARGET) unit-test build/source_interface-test
+	./build/source_interface-test
 	bash tests/smoke.sh
 	bash tests/sleep_states.sh
 sanitize:
 	$(MAKE) clean
 	$(MAKE) CFLAGS='-std=c11 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wpedantic -Wformat=2 -Werror=format-security' LDFLAGS='-fsanitize=address,undefined' test
 clean:
-	rm -rf build/obj build/dpdp $(TESTS:%=build/%-test)
+	rm -rf build/obj build/dpdp build/source_interface-test $(TESTS:%=build/%-test)

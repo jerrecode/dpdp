@@ -52,7 +52,8 @@ static uint64_t seq_no;
 static int debug_mode;
 static sec_ctx security;
 static int security_ready;
-static pid_t hooks[32];
+static int runtime_lock = -1;
+static pid_t hooks[32], master_workers[8];
 
 static void stop_handler(int sig) {
     (void)sig;
@@ -547,8 +548,10 @@ static int interface_address(const char *name, struct in_addr *addr) {
 /* Returns 0 when expected network present, 1 for no Wi-Fi, 2 for different Wi-Fi,
    3 for unavailable/unverifiable Android API. Never leak discovery to unverified SSIDs. */
 static int phone_network(void) {
-    if (!cfg.termux || !cfg.ssid[0])
+    if (!cfg.termux)
         return 0;
+    if (!cfg.ssid[0])
+        return 3;
     FILE *f = popen("timeout 4 termux-wifi-connectioninfo 2>/dev/null", "r");
     if (!f)
         return 3;
@@ -621,6 +624,27 @@ static int open_socket(struct in_addr ip, int ifindex) {
     inet_ntop(AF_INET, &ip, security.bind_ip, sizeof security.bind_ip);
     return 0;
 }
+static ssize_t send_selected(const void *data, size_t length, const struct sockaddr_in *to) {
+    union {
+        struct cmsghdr alignment;
+        unsigned char bytes[CMSG_SPACE(sizeof(struct in_pktinfo))];
+    } control = {0};
+    struct iovec iov = {.iov_base = (void *)data, .iov_len = length};
+    struct msghdr msg = {.msg_name = (void *)to,
+                         .msg_namelen = sizeof *to,
+                         .msg_iov = &iov,
+                         .msg_iovlen = 1,
+                         .msg_control = control.bytes,
+                         .msg_controllen = sizeof control.bytes};
+    struct cmsghdr *c = CMSG_FIRSTHDR(&msg);
+    c->cmsg_level = IPPROTO_IP;
+    c->cmsg_type = IP_PKTINFO;
+    c->cmsg_len = CMSG_LEN(sizeof(struct in_pktinfo));
+    struct in_pktinfo *packet = (struct in_pktinfo *)CMSG_DATA(c);
+    packet->ipi_ifindex = cur_ifindex;
+    packet->ipi_spec_dst = cur_ip;
+    return sendmsg(fd, &msg, MSG_DONTWAIT);
+}
 static void send_packet(char type, const struct sockaddr_in *dest) {
     if (fd < 0)
         return;
@@ -634,7 +658,7 @@ static void send_packet(char type, const struct sockaddr_in *dest) {
         to = *dest;
     else
         inet_pton(AF_INET, GROUP, &to.sin_addr);
-    if (sendto(fd, buf, (size_t)n, 0, (struct sockaddr *)&to, sizeof to) < 0 && debug_mode)
+    if (send_selected(buf, (size_t)n, &to) < 0 && debug_mode)
         perror("sendto");
 }
 static int parse_packet(char *buf, size_t n, char *kind, char id[33], char name[49]) {
@@ -669,11 +693,10 @@ static int parse_packet(char *buf, size_t n, char *kind, char id[33], char name[
 static void maybe_master(peer_t *p) {
     if (!cfg.auto_ssh || !p->authenticated || p->master_pid > 0 || mono_ms() < p->ssh_retry_ms)
         return;
-    unsigned count = 0;
-    for (unsigned i = 0; i < peer_count; i++)
-        if (peers[i].master_pid > 0)
-            count++;
-    if (count >= 8)
+    unsigned slot = 0;
+    while (slot < 8 && master_workers[slot])
+        slot++;
+    if (slot == 8)
         return;
     struct json_object *paired = sec_find(&security, p->id);
     int offered = paired && sec_str(paired, "ssh_host")[0];
@@ -684,11 +707,19 @@ static void maybe_master(peer_t *p) {
     p->ssh_retry_ms = mono_ms() + 30000;
     pid_t child = fork();
     if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        if (runtime_lock >= 0)
+            close(runtime_lock);
+        if (fd >= 0)
+            close(fd);
+        fd = -1;
         int rc = access_command(&security, "master", p->id, 0, NULL);
         _exit(rc ? 1 : 0);
     }
-    if (child > 0)
+    if (child > 0) {
+        master_workers[slot] = child;
         p->master_pid = child;
+    }
 }
 static peer_t *upsert_verified(const char *id, const char *name, const char *ip,
                                int authenticated) {
@@ -701,9 +732,27 @@ static peer_t *upsert_verified(const char *id, const char *name, const char *ip,
     if (p && p->authenticated && !authenticated)
         return p; /* v1 never replaces a verified endpoint */
     if (!p) {
-        if (peer_count >= MAX_PEERS)
+        if (peer_count < MAX_PEERS)
+            p = &peers[peer_count++];
+        else if (security_ready) {
+            struct json_object *incoming = sec_find(&security, id);
+            if (incoming) {
+                json_object_put(incoming);
+                for (unsigned i = 0; i < peer_count; i++) {
+                    if (peers[i].authenticated)
+                        continue;
+                    struct json_object *known = sec_find(&security, peers[i].id);
+                    if (known) {
+                        json_object_put(known);
+                        continue;
+                    }
+                    p = &peers[i];
+                    break;
+                }
+            }
+        }
+        if (!p)
             return NULL;
-        p = &peers[peer_count++];
         memset(p, 0, sizeof *p);
         copy(p->id, sizeof p->id, id);
     }
@@ -753,7 +802,7 @@ static void send_secure(char kind, const char *echo, const struct sockaddr_in *d
         to = *dest;
     else
         inet_pton(AF_INET, GROUP, &to.sin_addr);
-    sendto(fd, wire, (size_t)n, MSG_DONTWAIT, (struct sockaddr *)&to, sizeof to);
+    send_selected(wire, (size_t)n, &to);
 }
 static void changed_address_hints(void) {
     /* Called after binding the new address, so signatures and packet metadata agree. */
@@ -772,15 +821,19 @@ static void changed_address_hints(void) {
     send_secure('Q', "-", NULL);
 }
 static void recv_one(void) {
-    char buf[MAX_PACKET + 1], ctrl[128];
+    char buf[MAX_PACKET + 1];
+    union {
+        struct cmsghdr alignment;
+        unsigned char bytes[128];
+    } control;
     struct sockaddr_in sender = {0};
     struct iovec iov = {.iov_base = buf, .iov_len = MAX_PACKET};
     struct msghdr msg = {.msg_name = &sender,
                          .msg_namelen = sizeof sender,
                          .msg_iov = &iov,
                          .msg_iovlen = 1,
-                         .msg_control = ctrl,
-                         .msg_controllen = sizeof ctrl};
+                         .msg_control = control.bytes,
+                         .msg_controllen = sizeof control.bytes};
     ssize_t n = recvmsg(fd, &msg, MSG_DONTWAIT);
     if (n <= 0 || (msg.msg_flags & MSG_TRUNC))
         return;
@@ -1117,6 +1170,14 @@ int main(int argc, char **argv) {
     if (!cfg.iface[0] || if_nametoindex(cfg.iface) == 0) {
         message("warning", "interface absent; daemon will poll until it appears");
     }
+    char runpath[560];
+    snprintf(runpath, sizeof runpath, "%s.run.lock", cfg.config);
+    runtime_lock = open(runpath, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (runtime_lock < 0 || flock(runtime_lock, LOCK_EX | LOCK_NB)) {
+        message("error",
+                "daemon already running for this configuration, or runtime lock unavailable");
+        return 1;
+    }
     load_old_peers();
     for (unsigned i = 0; i < peer_count; i++)
         sync_registry(&peers[i]);
@@ -1202,6 +1263,9 @@ int main(int argc, char **argv) {
            so the Termux API subprocess still has a waitable exit status. */
         pid_t reaped;
         while ((reaped = waitpid(-1, NULL, WNOHANG)) > 0) {
+            for (unsigned i = 0; i < 8; i++)
+                if (master_workers[i] == reaped)
+                    master_workers[i] = 0;
             for (unsigned i = 0; i < 32; i++)
                 if (hooks[i] == reaped)
                     hooks[i] = 0;

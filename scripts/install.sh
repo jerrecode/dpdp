@@ -185,7 +185,8 @@ PrivateTmp=true
 WantedBy=default.target
 EOT
   systemctl --user daemon-reload
-  systemctl --user enable --now dpdp.service || log 'Could not start user systemd service; run systemctl --user status dpdp.service'
+  systemctl --user enable dpdp.service
+  systemctl --user restart dpdp.service || log 'Could not start user systemd service; run systemctl --user status dpdp.service'
   if ((LINGER)) && need loginctl;then
    if sudo -n loginctl enable-linger "$(id -un)" 2>/dev/null;then
     log 'Enabled boot service without graphical login (linger)'
@@ -217,6 +218,7 @@ HELP
   fi
   deps;make -C "$ROOT" all
   mkdir -p "$(dirname "$BIN")";install -m 0755 "$ROOT/build/dpdp" "$BIN"
+  install -D -m 0644 "$ROOT/build/vendor/boringssl/LICENSE" "$HOME/.local/share/dpdp/licenses/BoringSSL-LICENSE"
   find_iface;phone_ssid;setup_wifi;config_write
   "$BIN" init --config "$CONF"
   setup_access;autostart

@@ -36,6 +36,13 @@ int main(void) {
     assert(p->authenticated && p->dispatched);
     p = upsert(remote.id, "spoofed-name", "192.0.2.99");
     assert(!strcmp(p->ip, "192.0.2.2") && !strcmp(p->name, "phone") && p->authenticated);
+    /* An unverified-peer flood cannot reserve all slots against a paired node. */
+    peer_count = MAX_PEERS;
+    memset(peers, 0, sizeof peers);
+    for (unsigned i = 0; i < MAX_PEERS; i++)
+        snprintf(peers[i].id, sizeof peers[i].id, "ffffffffffffffffffffffff%08x", i);
+    p = upsert_verified(remote.id, "phone", "192.0.2.2", 1);
+    assert(p && p->authenticated);
     assert(sec_unpair(&security, remote.id) == 0);
     assert(start_services(p) == 0);
     while (waitpid(-1, NULL, 0) > 0) {

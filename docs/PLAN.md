@@ -1,55 +1,44 @@
-# DPDP delivery status and next-phase development plan
+# DPDP implementation status
 
-## Implemented baseline (C)
+## Implemented
 
-- [x] C11 UDP discovery daemon with persistent 128-bit identity, bounded parsing and per-interface multicast.
-- [x] Symmetric query/response/announcement, automatic IP address rebinding and periodic rediscovery.
-- [x] Peer registry JSON, offline retention, atomic persistence, metadata/service preservation.
-- [x] Local allowlisted service hooks with trusted-peer opt-in, environment variables and no remote command strings.
-- [x] Debian/Termux build and install scripts; Debian USB Wi-Fi preference, saved reachable NM profile selection, cloned no-default-route Wi-Fi connection.
-- [x] Debian systemd user startup/linger attempt, Termux:Boot entry, Termux SSID-based 60 s/15 s sleep states.
-- [x] Local two-process integration test and GitHub Actions Linux build/test.
+- [x] Native C11 IPv4 multicast/unicast discovery on a selected interface; persistent IDs and automatic address rebinding.
+- [x] Identity-owned JSON metadata preservation, duplicate-name/rename collision isolation, atomic persistence and concurrent initialization tests.
+- [x] Ed25519 private key generation, private PKCS#8 persistence/reload and pinned peer public identities.
+- [x] Six-digit SPAKE2 pairing via pinned upstream BoringSSL, followed by TLS1.3 with the high-entropy derived PSK and exporter-bound mutual key proofs.
+- [x] Foreground Debian code display / Termux input, interactive pair-watch, bounded 120-second/three-attempt window and absolute exchange deadline.
+- [x] Pending enrollment recovery, conflicting-key rejection, serialized commit/grant and revocation-epoch protection against in-flight reauthorization.
+- [x] Signed nonce-bound/source-IP-bound endpoint proofs, replay/duplicate rejection and signed unicast address-change hints with multicast fallback.
+- [x] Explicit unicast source/interface selection through IP_PKTINFO; paired-state priority over unverified table entries; bounded packet/reply work.
+- [x] Legacy discovery is informational only: no unauthorized hooks or replacement of verified addresses.
+- [x] Explicit SSH offers, dedicated client keys, exchanged/pinned Ed25519 sshd keys, managed authorized_keys updates/removal.
+- [x] Supervised endpoint-specific OpenSSH masters and helpers for SSH, SFTP, transfers and TCP forwarding; selected local source binding and strict host-key policy.
+- [x] Single daemon per config; at most eight SSH workers and 32 hook children; Debian update restarts its user service.
+- [x] Debian USB Wi-Fi/NetworkManager selection, no-default-route profile cloning, systemd/linger; Termux Boot/API and fail-closed SSID sleep policy.
+- [x] Native regression suites, real PAKE/TLS streams, real TCP pairing CLI + UDP integration tests, unicast source test, runtime lock and ASan/UBSan CI wiring.
 
-## October 27, 2026 hardening increment
+Implementation checkboxes describe code delivered by PR #6; final merge/CI evidence
+must be read from the actual PR and Actions state, not inferred from this checklist.
 
-- [x] Reproduce and fix registry name/suffix collisions transferring another peer's metadata and authorization; cover three equal names/shared eight-character ID prefixes, occupied rename destinations, null entries and long operator keys.
-- [x] Serialize first-start identity creation using an advisory identity lock; concurrent initializers reuse one ID and read failures cannot replace existing identities.
-- [x] Reject malformed protocol fields, embedded NUL suffixes and overflowing sequence numbers.
-- [x] Add network-independent C regression tests and instrument every binary in `make sanitize`; run full sanitizers in CI.
+## Security and lifecycle work still open (#1, #3)
 
-These changes do not authenticate IDs. Issue #1 remains the highest security priority. Issues #2–#4 also remain open.
+- [ ] Independent cryptographic/protocol audit; broader fuzz/property and hostile-load tests.
+- [ ] Explicit signed key rotation/onboarding recovery UI; different keys must not overwrite pins automatically.
+- [ ] Immediate server-side termination of already authenticated inbound SSH sessions. Current unpair removes authorization for new authentications and stops local managed outbound sessions; external sshd sessions have a narrower revocation contract.
+- [ ] UNIX event/subscription API, per-service instance supervision, durable idempotency and observable execution/restart state.
+- [ ] Improve fair per-source rate limiting and resilience under sustained hostile packet floods.
+- [ ] Transactional CLI for concurrent registry edits; strict parsing/config validation throughout remaining legacy code.
 
-## Priority 1: security and reliability before untrusted LAN deployment
+## Deployment and network work still open (#2, #4)
 
-- [ ] Cryptographic device keys and authenticated signed announcements, replay-resistant handshake.
-- [ ] Verify peer challenge/response on the reported endpoint before service hooks trigger.
-- [ ] Add explicit trusted-peer onboarding/pairing CLI, revocation and signed key rotation.
-- [ ] Durable event queue or local UNIX socket API, and supervised/deduplicated service lifecycle.
-- [ ] Harden input limits, parsers, concurrent JSON editors, hostile-LAN rate limiting and fuzz tests.
-- [ ] Test real phone + USB dongle + LAN Internet routing, shutdown, DHCP reassignment, simultaneous address changes, Wi-Fi reconnect and app suspension.
+- [ ] Physical Debian USB Wi-Fi + preferred Ethernet routing/DNS validation.
+- [ ] Physical two-device pairing, SSH/SFTP, DHCP changes, simultaneous changes and device reboot tests.
+- [ ] Android Wi-Fi permission/multicast delivery, SSID transitions, Doze/termination and measured power usage.
+- [ ] NetworkManager profile idempotence, exclusion of managed clones, rollback/dry-run and adapter renaming tests.
+- [ ] IPv6, scoped link-local endpoints, netlink subscriptions with reconciliation and optional mDNS/DNS-SD interoperability.
+- [ ] Multi-interface network namespace/loss/reordering tests beyond selected-source regression coverage.
+- [ ] CPU/memory/packet/battery benchmarks and signed release packaging to avoid large first-build dependencies on phones.
 
-## Priority 2: deployment portability and power efficiency
-
-- [ ] Netlink (`RTM_NEWADDR`, `RTM_NEWLINK`) instead of periodic Linux address enumeration.
-- [ ] Android JobScheduler/AlarmManager integration and adaptive battery policy that explicitly states OS wake limitations.
-- [ ] IPv6 link-local multicast/scoped addresses and multi-address peers.
-- [ ] DNS-SD/mDNS adapter for interoperable discovery, if justified by deployment tests.
-- [ ] Installer transactional NetworkManager changes and rollback/dry-run; route invariants test for wired default Internet access.
-- [ ] Stronger test harness using network namespaces, `tc netem`, IPv4 multicast fault injection and sanitizer builds.
-
-## Priority 3: performance and usability
-
-- [ ] Property-based and fuzz testing on protocol messages, JSON inputs and reloads.
-- [ ] Benchmark packet/CPU/memory/battery use across peer counts and idle/wrong-network states.
-- [ ] Structured logging, diagnostics JSON, service-hook status and per-peer metrics.
-- [ ] Package binaries and cross-platform release distribution with signatures.
-
-## Acceptance criteria for physical deployment
-
-1. Both Debian/Termux instances start automatically after the platform's permitted boot startup, with no Internet discovery server.
-2. Debian can retain Ethernet as its Internet route while a USB Wi-Fi adapter connects via an existing saved NM profile to the phone's WLAN.
-3. Correct phone WLAN yields peer discovery; wrong WLAN or no WLAN produces no outgoing DPDP packets and uses the configured polling interval.
-4. Each device's registry contains the other's stable ID, name and updated IP; user-written `trusted`, `services` and custom metadata survive registry refreshes and restarts.
-5. Authorized local services run at most once per detected peer/IP transition within one daemon session and receive correct environment variables.
-6. Following independently changed DHCP addresses, periodic rediscovery re-establishes both peers within bounded time on a multicast-capable network.
-7. No unauthenticated packet can embed executable commands; for deployment on hostile LANs, full cryptographic identity verification is mandatory and currently **not implemented**.
+All four original issues remain open until their full acceptance criteria are met.
+Old pre-pairing Termux daemons must be stopped/rebooted after upgrading; a new binary
+cannot retroactively secure an already running old process.

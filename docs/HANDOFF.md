@@ -1,94 +1,97 @@
-# DPDP continuation checkpoint — 2026-10-27
+# DPDP — secure pairing continuation checkpoint, 2026-10-27
 
-Repository: https://github.com/jerrecode/dpdp (canonical branch: main).
-Implementation checkpoint: `99dd9383e212332b277165a789399fbe75199bab` on
-`fix/identity-registry-and-wire-validation`, PR #5. This document is a subsequent
-documentation commit. Fetch current main and inspect PR #5 before resuming; do not
-assume the checkpoint is still the latest commit or an unmerged branch needs merging.
+Repository: https://github.com/jerrecode/dpdp ; canonical branch: main.
+Feature branch: feature/secure-pairing-ssh ; integration PR: #6.
+Base main: 5d46f92e74ccda0e68be667999d6e050a2ba0967 (merged PR #5).
+Fetch live refs and inspect PR #6/Actions before resuming; this handoff travels
+with the implementation, so its containing commit is the current code checkpoint.
+Do not assume PR #6 is unmerged or repeat completed work from PR #5.
 
-## Completed in this increment
+## User goal / final route
 
-1. Reproduced a registry bug: three equal names with a shared eight-character ID
-   prefix could transfer an existing peer's metadata, trusted flag and services to
-   another ID. Rename destinations could also overwrite unrelated entries.
-   Entries now resolve by full ID and select a free name/full-ID/numeric display
-   key. Null values and long operator keys are preserved. Schema remains version 1;
-   old shortened keys migrate on refresh, without losing identity-owned metadata.
-2. Reproduced simultaneous first-start processes generating different IDs for the
-   same configuration. Identity initialization now holds `<config>.id.lock` across
-   read/generate/write. Existing unreadable or invalid identity paths are preserved.
-3. Reproduced acceptance of malformed frames via collapsed empty fields, trailing
-   separators and embedded NUL suffixes. Parsing now requires exactly five fields,
-   no embedded NUL, and an unsigned 64-bit decimal sequence without overflow.
-4. Added network-independent C tests; fixed `make sanitize` to instrument the daemon
-   and every regression binary, with C11 and warning flags; enabled full sanitizer
-   integration tests in GitHub Actions.
+Debian displays a six-digit code, Termux accepts it, both exchange cryptographic
+identities over TCP and later verify silently. Changed IPs produce signed unicast
+hints followed by a fresh challenge; multicast remains the simultaneous-change
+fallback. OpenSSH masters share SSH/SFTP/file-transfer/forwarding channels.
+Names are presentation labels; full pinned public keys establish trust.
 
-Changed files: `src/dpdp.c`, `Makefile`, `tests/registry.c`, `tests/protocol.c`,
-`tests/identity.c`, `.github/workflows/ci.yml`, `README.md`,
-`docs/ARCHITECTURE.md`, `docs/PLAN.md`, and this handoff.
+C modules: security.c/h (GnuTLS Ed25519, strict/atomic pin storage, nonce proofs,
+revocation epoch/transaction commit); pairing.c (bounded native PAKE/TLS and CLI);
+pake_bridge.c/h (upstream BoringSSL SPAKE2 only); access.c (SSH key offers/grants,
+strict pins, exact owner sidecars, supervised SSH child). dpdp.c integrates signed
+UDP, paired-slot priority, hook authorization and pairing/access/watch CLI.
 
-## Evidence
+GnuTLS TLS-SRP was rejected after real package tests: it is disabled in current
+GnuTLS defaults; Termux OpenSSL explicitly disables SRP. A pinned BoringSSL crypto
+archive implements SPAKE2 instead, yielding a 64-byte high-entropy TLS1.3 PSK for
+GnuTLS. Six digits are never used as a raw TLS PSK or sent inside unauthenticated TLS.
+Pinned upstream revision: e651545da6e26e1f4420723a3b69a78ed1b9c51d.
+First build needs CMake/C++17/git; Python is test-only. No crypto primitives are
+implemented by DPDP. See architecture and design/plan documents for exact framing.
 
-All three regressions failed against pre-fix production code and passed after fixes.
-Warning-enabled C11 build, shell syntax checks, `git diff --check`, and GCC 13
-`-fanalyzer` compilation passed locally. Unit tests also passed under ASan/UBSan
-with `ASAN_OPTIONS=detect_leaks=0` locally because this environment denies the
-`/proc` inspection required by LeakSanitizer.
+## Fixes found during implementation/review
 
-Local multicast smoke testing failed on the unchanged baseline: interface enumeration
-and netlink access are restricted here. This is an environment limitation, not a
-successful integration test. GitHub Actions PR run **40487450868** on implementation
-checkpoint **99dd938** passed the full normal suite AND full `make sanitize`, including
-multicast discovery, trusted local hooks and mocked Termux SSID states. GitHub CI
-uses default leak detection; it does not apply the local workaround.
+- Generic GnuTLS Ed25519 export yielded UNKNOWN PEM, failing restart. Use PKCS#8;
+  a test reloads the same key and compares the public identity.
+- Plain sendto on an ANY-bound socket could source signed unicast from preferred
+  Ethernet instead of selected Wi-Fi. All sends now use IP_PKTINFO source/interface
+  selection; a real UDP source-IP test covers this.
+- Delayed pairing could undo unpair. Pending records, random transaction tokens,
+  pre-handshake revocation epochs, and one lock around grant/final commit/revoke
+  prevent both reported interleavings. Tests revoke before/after staging.
+- A helper could start after unpair's socket scan. Helpers now supervise OpenSSH,
+  rechecking authorization/endpoint each second while scheduled and terminating
+  their child on revocation, endpoint change or shutdown. No detached persistence.
+- Long full-ID control sockets did not fit normal Termux paths plus OpenSSH's
+  temporary suffix. Hash full identity/endpoint and keep full-ID owner sidecars.
+- Unverified table entries could crowd out paired devices; verified pairings may
+  replace unverified memory entries without deleting persistent user metadata.
 
-Direct Git push lacked credentials here. The GitHub connector published the exact
-locally tested tree (`1f117a66c6640077c54790db8d274ffd64819448`), with parent
-`9cb931e49966a75e162153159b35fc2198bb59d3`. Local preparatory commits 6bbbe15 and
-94e7000 are equivalent-tree development history, not additional remote work to merge.
+## Validation / how to reproduce
 
-## Remaining work and boundaries
+make; make unit-test; make test; make sanitize. Dependencies are documented in README.
+Local warning builds and seven native suites passed during implementation. These
+include real correct/wrong-code SPAKE2/TLS1.3, wrong target and interrupted retry,
+stalled stream deadlines, private-key reload, forged/replayed/stale proofs, exact
+source-IP validation, conflicting pins, revoked/stale enrollment transactions,
+legacy-hook denial, SSH key/blob/pin/master ownership arguments, running helper
+cancellation and single-runtime locking. The selected-source UDP regression also
+passed locally. Existing registry/protocol/identity tests remain.
 
-No issue is fully completed: **#1, #2, #3, #4 remain open**. This increment fixes
-prerequisite defects; it does not satisfy their complete acceptance criteria.
+Local full integration was limited by interface enumeration restrictions; ASan/UBSan
+unit checks used ASAN_OPTIONS=detect_leaks=0 because /proc inspection is blocked here.
+Early draft CI failures were real (missing dependencies initially, then the UNKNOWN
+PEM reload defect); do not report those drafts as passed. Check the latest PR run for
+full normal/TCP/UDP and sanitizer evidence. CI uses default leak detection.
+No physical Debian/Android tests or actual remote sshd transfer tests occurred.
+Access tests use real SSH key generation with a controlled executable fixture;
+real SSH/SFTP behavior still depends on each device's sshd configuration.
 
-**Highest priority: #1 authentication.** Random IDs and trusted=true are still
-unauthenticated. A LAN attacker can spoof an already authorized ID and trigger a
-locally configured hook. Strict parsing and collision isolation do not prevent this.
-Research libsodium/OpenSSL using primary sources, choose a standard library, design
-key-backed identity plus authenticated endpoint challenge/response, pairing,
-revocation, replay protection and explicit v1 migration. Do not write crypto primitives.
-Do not enable authenticated-service claims before adversarial tests demonstrate them.
+Changed files: Makefile/.gitignore/CI, src/dpdp.c plus the new security/access
+source/header modules, scripts/build-pake.sh and install.sh, tests/security.c,
+pairing.c, authorization.c, access.c, source_interface.c, runtime_lock.sh,
+pair_cli.py and smoke.sh; README, architecture, plan, design and this handoff.
 
-**#3 runtime:** child count/lifecycle supervision, per-service deduplication and an
-endpoint/event API remain absent. Registry locking only coordinates cooperating
-writers. Further audit targets visible in code, not yet regression-reproduced in
-this increment: JSON parsing does not verify complete input consumption; registry
-lock opens lack O_NOFOLLOW/O_CLOEXEC; hook authorization booleans use permissive
-JSON coercion; repeated endpoint changes can spawn unbounded children.
+## Remaining boundaries and next work
 
-**Installer:** saved-profile selection includes DPDP-created clones, potentially
-causing ambiguous selection or clone proliferation on reinstall. Reproduce with a
-fake nmcli harness before fixing. Transactional rollback, DNS isolation, profile
-idempotence and adapter renaming remain unverified. Numeric config parsing also
-uses unchecked strtoul conversions; add rejection tests before changing it.
+All original issues #1–#4 remain open. Cryptography is experimental integration,
+not independently audited. Unpair denies new authentication and stops local outbound
+helpers/masters, but cannot terminate already authenticated inbound external sshd
+connections/channels. Full server-side cutoff and signed key rotation remain work.
+No event socket/durable per-service supervision or exactly-once hooks yet.
+Physical USB/Ethernet routing/DNS and Android Doze/multicast/battery are unverified;
+never infer them from Linux CI. NetworkManager clone idempotence/rollback and IPv6/
+netlink remain future work. First native dependency build is relatively large.
 
-**#2 external dependency:** physical Debian USB adapter/Ethernet routing and Android
-Termux/Boot/Doze/multicast tests require access to the user's devices. None occurred
-in this session. Do not infer hardware compatibility or battery use from Linux CI.
-Do not modify user routes or request diagnostics as a prerequisite for independent work.
+Both devices must upgrade; stop/reboot an old pre-pairing Termux daemon once.
+Foreground pair-watch needs a terminal and a separate running discovery daemon.
+SSH account access is explicitly enabled before pairing by --enable-ssh/access-init;
+it never grants root or bypasses Android filesystem permissions. Existing TCP
+sessions cannot migrate IPs; masters reconnect and users retry interrupted transfers.
 
-**#4:** IPv6, mDNS, netlink subscriptions, packet-loss/network-namespace tests and
-measured resource/battery benchmarks remain future work. Core stays native C on
-Debian and Termux, json-c remains the runtime dependency; sleep policy is unchanged.
-
-## Resume without repeating completed work
-
-Fetch main; inspect PR #5, latest CI/reviews and open issues. Read this handoff,
-README, architecture and plan. Build with `make`; run `make unit-test`, `make test`
-and `make sanitize` where interface and /proc access permit. Keep genuine failures
-visible; do not silently skip tests to obtain a green result. Continue with one
-focused authentication or safe-dispatch increment, adding failing tests first.
-Use branches/PRs, inspect CI and reviews, fix findings, merge validated work, and
-keep all four issues open until their actual acceptance criteria are satisfied.
+Continue by inspecting final PR #6 review/checks, fixing remaining findings before
+merge, then focusing on physical validation or one bounded follow-up from PLAN.
+Preserve identities/pins/user metadata; keep SSH host verification strict; never
+replace the PAKE with a plaintext code or raw six-digit TLS PSK. Publish tested work
+and keep issue states honest. Direct Git push lacks credentials in this environment;
+the connected GitHub tools can publish exact tested trees with expected-head leases.

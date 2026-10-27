@@ -30,6 +30,8 @@ const char *sec_str(struct json_object *o, const char *key);
 struct json_object *sec_pairs(sec_ctx *s);
 struct json_object *sec_find(sec_ctx *s, const char *selector);
 int sec_pin(sec_ctx *s, struct json_object *identity);
+int sec_epoch(sec_ctx *s, char out[33]);
+int sec_pair_commit(sec_ctx *s, const char *id, const char *token);
 int sec_unpair(sec_ctx *s, const char *selector);
 int sec_sign(sec_ctx *s, const void *data, size_t len, char sig[129]);
 int sec_verify(const char *pub, const void *data, size_t len, const char *sig);

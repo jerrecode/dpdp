@@ -108,6 +108,9 @@ static int pair_until(sec_ctx *s, int fd, int server, const char *code, const ch
                       uint64_t until) {
     if (!valid_code(code))
         return -1;
+    char epoch[33];
+    if (sec_epoch(s, epoch))
+        return -1;
     int flags = fcntl(fd, F_GETFL);
     if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
         return -1;
@@ -200,6 +203,11 @@ static int pair_until(sec_ctx *s, int fd, int server, const char *code, const ch
     if (expected_id && strcmp(expected_id, sec_str(remote, "id")))
         goto done;
     stage = "pin identity";
+    char token[33];
+    if (sec_random_hex(token, 16))
+        goto done;
+    json_object_object_add(remote, "enrollment_epoch", json_object_new_string(epoch));
+    json_object_object_add(remote, "pairing_token", json_object_new_string(token));
     json_object_object_add(remote, "pending", json_object_new_boolean(1));
     if (access_validate(remote) || sec_pin(s, remote))
         goto done;
@@ -208,13 +216,10 @@ static int pair_until(sec_ctx *s, int fd, int server, const char *code, const ch
     stage = "commit/SSH authorization";
     char ack = 'K', peer_ack = 0;
     if (transfer(tls, fd, &ack, 1, 1, until) || transfer(tls, fd, &peer_ack, 1, 0, until) ||
-        peer_ack != 'K' || access_grant(s, remote))
+        peer_ack != 'K')
         goto done;
-    json_object_object_add(remote, "pending", json_object_new_boolean(0));
-    if (sec_pin(s, remote)) {
-        access_revoke(s, sec_str(remote, "id"));
+    if (sec_pair_commit(s, sec_str(remote, "id"), token))
         goto done;
-    }
     fprintf(stderr, "Paired %s (%s)\n", sec_str(remote, "name"), sec_str(remote, "id"));
     rc = 0;
 done:
@@ -325,7 +330,7 @@ int sec_pair_cli(sec_ctx *s, int server, const char *bind_ip, const char *peer_i
         close(fd);
     }
 done:
-    memset(code, 0, sizeof code);
+    gnutls_memset(code, 0, sizeof code);
     if (listener >= 0)
         close(listener);
     if (lock >= 0)

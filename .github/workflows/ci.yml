@@ -1,10 +1,12 @@
 name: Linux C CI
 on:
   push:
+    branches: [main]
   pull_request:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -12,7 +14,7 @@ jobs:
       - name: Build
         run: make
       - name: Validate installer syntax
-        run: bash -n scripts/install.sh scripts/diagnose.sh tests/smoke.sh tests/sleep_states.sh scripts/build-pake.sh
+        run: bash -n scripts/install.sh scripts/diagnose.sh tests/smoke.sh tests/sleep_states.sh tests/runtime_lock.sh scripts/build-pake.sh
       - name: Integration test
         run: make test
       - name: Address and undefined behavior sanitizers

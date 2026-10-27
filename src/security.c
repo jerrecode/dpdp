@@ -211,7 +211,8 @@ int sec_init(sec_ctx *s, const char *config, const char *id, const char *name) {
         if (gnutls_x509_privkey_generate(x, GNUTLS_PK_EDDSA_ED25519, 256, 0) < 0)
             goto done;
         gnutls_datum_t pem = {0};
-        if (gnutls_x509_privkey_export2(x, GNUTLS_X509_FMT_PEM, &pem) < 0)
+        if (gnutls_x509_privkey_export2_pkcs8(x, GNUTLS_X509_FMT_PEM, NULL, GNUTLS_PKCS_PLAIN,
+                                              &pem) < 0)
             goto done;
         int err = sec_atomic(path, (char *)pem.data, pem.size);
         gnutls_free(pem.data);
@@ -371,6 +372,11 @@ int sec_pin(sec_ctx *s, struct json_object *identity) {
     if (!o)
         goto done;
     json_object_object_get_ex(o, "peers", &all);
+    struct json_object *enrolling = NULL;
+    json_object_object_get_ex(identity, "pending", &enrolling);
+    if (json_object_get_boolean(enrolling) &&
+        strcmp(sec_str(identity, "enrollment_epoch"), sec_str(o, "revocation_epoch")))
+        goto done;
     if (json_object_object_get_ex(all, id, &old)) {
         if (strcmp(sec_str(old, "public_key"), pub))
             goto done;
@@ -402,6 +408,14 @@ int sec_unpair(sec_ctx *s, const char *selector) {
     struct json_object *o = sec_pairs(s), *p = find_in(o, selector, 1);
     int rc = -1;
     if (p) {
+        char epoch[33];
+        if (sec_random_hex(epoch, 16)) {
+            json_object_put(o);
+            flock(lock, LOCK_UN);
+            close(lock);
+            return -1;
+        }
+        json_object_object_add(o, "revocation_epoch", json_object_new_string(epoch));
         json_object_object_add(p, "revoked", json_object_new_boolean(1));
         const char *encoded = json_object_to_json_string_ext(o, JSON_C_TO_STRING_PRETTY);
         rc = sec_atomic(path, encoded, strlen(encoded));
@@ -517,4 +531,53 @@ int sec_record_endpoint(sec_ctx *s, const sec_frame *f) {
     flock(lock, LOCK_UN);
     close(lock);
     return rc;
+}
+
+int sec_pair_commit(sec_ctx *s, const char *id, const char *token) {
+    char path[560], lp[580];
+    snprintf(path, sizeof path, "%s.paired.json", s->config);
+    snprintf(lp, sizeof lp, "%s.lock", path);
+    int lock = lock_file(lp);
+    if (lock < 0)
+        return -1;
+    struct json_object *root = sec_pairs(s), *p = find_in(root, id, 1), *pending = NULL,
+                       *revoked = NULL;
+    int rc = -1;
+    if (!p)
+        goto done;
+    json_object_object_get_ex(p, "pending", &pending);
+    json_object_object_get_ex(p, "revoked", &revoked);
+    if (strcmp(sec_str(p, "enrollment_epoch"), sec_str(root, "revocation_epoch")) ||
+        !json_object_get_boolean(pending) || json_object_get_boolean(revoked) ||
+        strcmp(token, sec_str(p, "pairing_token")))
+        goto done;
+    /* Serialize SSH grants and final commit with revocation. A stale enrollment
+       can never clear a revoked record or restore an already removed SSH key. */
+    if (access_grant(s, p))
+        goto done;
+    json_object_object_add(p, "pending", json_object_new_boolean(0));
+    json_object_object_del(p, "pairing_token");
+    const char *encoded = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PRETTY);
+    rc = sec_atomic(path, encoded, strlen(encoded));
+    if (rc)
+        access_revoke(s, id);
+done:
+    if (root)
+        json_object_put(root);
+    flock(lock, LOCK_UN);
+    close(lock);
+    return rc;
+}
+
+int sec_epoch(sec_ctx *s, char out[33]) {
+    struct json_object *root = sec_pairs(s);
+    if (!root)
+        return -1;
+    const char *epoch = sec_str(root, "revocation_epoch");
+    unsigned char bytes[16];
+    int valid = !epoch[0] || unhex(epoch, bytes, 16) == 0;
+    if (valid)
+        snprintf(out, 33, "%s", epoch);
+    json_object_put(root);
+    return valid ? 0 : -1;
 }

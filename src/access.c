@@ -5,7 +5,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <gnutls/crypto.h>
+#include <poll.h>
 #include <pwd.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -259,21 +261,27 @@ static int config_directory(sec_ctx *s, char out[512]) {
 }
 int access_revoke(sec_ctx *s, const char *id) {
     int rc = edit_authorized(id, NULL);
-    char dir[512], prefix[48];
+    char dir[512];
     config_directory(s, dir);
-    snprintf(prefix, sizeof prefix, "cm-%s-", id);
     DIR *d = opendir(dir);
     if (!d)
         return -1;
     struct dirent *e;
     while ((e = readdir(d))) {
-        if (strncmp(e->d_name, prefix, strlen(prefix)))
+        if (strncmp(e->d_name, "cm-", 3))
             continue;
         char path[800];
         if (snprintf(path, sizeof path, "%s/%s", dir, e->d_name) >= (int)sizeof path) {
             rc = -1;
             continue;
         }
+        char ownerpath[820];
+        snprintf(ownerpath, sizeof ownerpath, "%s.owner", path);
+        char *owner = sec_read(ownerpath);
+        int ours = owner && !strcmp(owner, id);
+        free(owner);
+        if (!ours)
+            continue;
         struct stat st;
         if (lstat(path, &st) || !S_ISSOCK(st.st_mode) || st.st_uid != getuid())
             continue;
@@ -284,7 +292,75 @@ int access_revoke(sec_ctx *s, const char *id) {
     closedir(d);
     return rc;
 }
+static volatile sig_atomic_t access_stopping;
+static void stop_access(int sig) {
+    (void)sig;
+    access_stopping = 1;
+}
+static int supervised_ssh(sec_ctx *s, struct json_object *authorization, char **argv) {
+    struct sigaction action = {.sa_handler = stop_access}, old_term, old_int, old_hup;
+    sigemptyset(&action.sa_mask);
+    access_stopping = 0;
+    sigaction(SIGTERM, &action, &old_term);
+    sigaction(SIGINT, &action, &old_int);
+    sigaction(SIGHUP, &action, &old_hup);
+    pid_t parent = getppid(), child = fork();
+    int result = -1;
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGINT, SIG_DFL);
+        signal(SIGHUP, SIG_DFL);
+        execvp(argv[0], argv);
+        perror("OpenSSH");
+        _exit(127);
+    }
+    if (child < 0)
+        goto done;
+    for (;;) {
+        struct json_object *current = sec_find(s, sec_str(authorization, "id"));
+        const char *fields[] = {"public_key", "ssh_host", "ssh_user", "ssh_port", "last_ip"};
+        int allowed = current != NULL;
+        for (unsigned i = 0; allowed && i < sizeof fields / sizeof fields[0]; i++)
+            if (strcmp(sec_str(current, fields[i]), sec_str(authorization, fields[i])))
+                allowed = 0;
+        if (current)
+            json_object_put(current);
+        if (!allowed || access_stopping || getppid() != parent) {
+            kill(child, SIGTERM);
+            uint64_t end = sec_now() + 2000;
+            int status;
+            pid_t reaped;
+            while ((reaped = waitpid(child, &status, WNOHANG)) == 0 && sec_now() < end)
+                poll(NULL, 0, 50);
+            if (reaped == 0) {
+                kill(child, SIGKILL);
+                while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+                }
+            }
+            break;
+        }
+        int status;
+        pid_t reaped = waitpid(child, &status, WNOHANG);
+        if (reaped == child) {
+            result = WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+            break;
+        }
+        if (reaped < 0 && errno != EINTR)
+            break;
+        poll(NULL, 0, 1000);
+    }
+done:
+    sigaction(SIGTERM, &old_term, NULL);
+    sigaction(SIGINT, &old_int, NULL);
+    sigaction(SIGHUP, &old_hup, NULL);
+    return result;
+}
 int access_command(sec_ctx *s, const char *action, const char *selector, int argc, char **args) {
+    if (strcmp(action, "ssh") && strcmp(action, "sftp") && strcmp(action, "master") &&
+        strcmp(action, "forward") && strcmp(action, "send") && strcmp(action, "receive"))
+        return -1;
+    if (!strcmp(action, "ssh") && argc > 0 && args[0][0] == '-')
+        return -1;
     struct json_object *p = sec_find(s, selector);
     if (!p)
         return -1;
@@ -301,7 +377,7 @@ int access_command(sec_ctx *s, const char *action, const char *selector, int arg
     if (age < 0 || age > 90)
         goto done;
     char known[560], clientkey[560], alias[64], knownopt[600], hostopt[96], controlopt[680],
-        directory[512], control[640], endpoint[256], digest[25], target[96];
+        directory[512], control[640], endpoint[320], digest[33], target[96];
     snprintf(known, sizeof known, "%s.known-%s", s->config, id);
     snprintf(clientkey, sizeof clientkey, "%s.ssh", s->config);
     snprintf(alias, sizeof alias, "dpdp-%s", id);
@@ -311,15 +387,23 @@ int access_command(sec_ctx *s, const char *action, const char *selector, int arg
         goto done;
     snprintf(knownopt, sizeof knownopt, "UserKnownHostsFile=%s", known);
     snprintf(hostopt, sizeof hostopt, "HostKeyAlias=%s", alias);
-    snprintf(endpoint, sizeof endpoint, "%s|%s|%u|%s", sec_str(p, "public_key"), ip, port, user);
+    snprintf(endpoint, sizeof endpoint, "%s|%s|%s|%u|%s", id, sec_str(p, "public_key"), ip, port,
+             user);
     unsigned char hash[32];
     if (gnutls_hash_fast(GNUTLS_DIG_SHA256, endpoint, strlen(endpoint), hash) < 0)
         goto done;
-    for (unsigned i = 0; i < 12; i++)
+    for (unsigned i = 0; i < 16; i++)
         snprintf(digest + 2 * i, 3, "%02x", hash[i]);
     config_directory(s, directory);
-    snprintf(control, sizeof control, "%s/cm-%s-%s", directory, id, digest);
-    if (strlen(control) > 100)
+    snprintf(control, sizeof control, "%s/cm-%s", directory, digest);
+    /* OpenSSH also appends a temporary suffix while creating the socket. */
+    if (strlen(control) > 90) {
+        fprintf(stderr, "SSH socket path too long; choose a shorter XDG_CONFIG_HOME\n");
+        goto done;
+    }
+    char ownerpath[660];
+    snprintf(ownerpath, sizeof ownerpath, "%s.owner", control);
+    if (sec_atomic(ownerpath, id, strlen(id)))
         goto done;
     snprintf(controlopt, sizeof controlopt, "ControlPath=%s", control);
     snprintf(target, sizeof target, "%s@%s", user, ip);
@@ -364,7 +448,7 @@ int access_command(sec_ctx *s, const char *action, const char *selector, int arg
     ARG("-o");
     ARG(!strcmp(action, "master") ? "ControlMaster=yes" : "ControlMaster=auto");
     ARG("-o");
-    ARG(!strcmp(action, "master") ? "ControlPersist=no" : "ControlPersist=60");
+    ARG("ControlPersist=no");
     ARG("-i");
     ARG(clientkey);
     ARG(scp || !strcmp(action, "sftp") ? "-P" : "-p");
@@ -375,15 +459,17 @@ int access_command(sec_ctx *s, const char *action, const char *selector, int arg
         ARG("-o");
         ARG(bindopt);
     }
-    char remote[2048];
+    char remote[2048], localpath[2048];
     if (scp) {
         if (argc != 2 || strlen(args[0]) > 1500 || strlen(args[1]) > 1500)
             goto done;
         const char *path = !strcmp(action, "send") ? args[1] : args[0];
         snprintf(remote, sizeof remote, "%s:%s", target, path);
+        const char *local = !strcmp(action, "send") ? args[0] : args[1];
+        snprintf(localpath, sizeof localpath, "%s%s", local[0] == '/' ? "" : "./", local);
         ARG("--");
-        ARG(!strcmp(action, "send") ? args[0] : remote);
-        ARG(!strcmp(action, "send") ? remote : args[1]);
+        ARG(!strcmp(action, "send") ? localpath : remote);
+        ARG(!strcmp(action, "send") ? remote : localpath);
     } else if (!strcmp(action, "master")) {
         if (argc)
             goto done;
@@ -408,8 +494,7 @@ int access_command(sec_ctx *s, const char *action, const char *selector, int arg
             ARG(args[i]);
     }
     argv[n] = NULL;
-    execvp(argv[0], argv);
-    perror("OpenSSH");
+    rc = supervised_ssh(s, p, argv);
 #undef ARG
 done:
     json_object_put(p);
