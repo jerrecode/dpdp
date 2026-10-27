@@ -113,6 +113,8 @@ pairing again. Incomplete enrollments stay pending and can be retried; a differe
 key can never silently overwrite an existing pinned identity. Key rotation to a
 new node identity requires explicit new pairing; there is no automatic key rollover.
 
+After pairing, press Ctrl+C to close the two assistants; discovery continues.
+
 After pairing, the background daemons verify each other silently with fresh signed
 challenges. `status` records `authenticated: true` only after a verified endpoint
 response. Legacy discovery remains visible as unverified information; it cannot
@@ -246,6 +248,7 @@ make
 make unit-test
 make test
 make sanitize
+make ssh-test        # optional Linux-only real sshd test; normal account + passwordless sudo
 bash scripts/install.sh update
 bash scripts/install.sh uninstall
 ```
@@ -253,7 +256,8 @@ bash scripts/install.sh uninstall
 Tests cover real PAKE/TLS exchanges, wrong code, wrong target, pending retry,
 forged/replayed/stale endpoint proofs, name collisions, pinning/revocation, legacy
 hook denial, SSH pin arguments/authorization cleanup, explicit unicast source IP,
-and real TCP pairing plus two-process UDP discovery in CI. ASan/UBSan instrument
+real TCP pairing plus two-process UDP discovery, and an optional isolated loopback
+sshd test for actual SSH/SFTP/file transfers in CI. ASan/UBSan instrument
 DPDP and its test binaries; dependency libraries use their own upstream builds.
 
 For read-only diagnosis:

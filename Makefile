@@ -14,7 +14,7 @@ PAKE_LIB := build/vendor/boringssl/libcrypto.a
 SEC_OBJ := build/obj/security.o build/obj/pairing.o build/obj/access.o build/obj/pake_bridge.o
 TESTS := registry protocol identity security pairing authorization access
 TARGET := build/dpdp
-.PHONY: all clean test unit-test sanitize
+.PHONY: all clean test unit-test ssh-test sanitize
 all: $(TARGET)
 $(PAKE_LIB): scripts/build-pake.sh
 	bash scripts/build-pake.sh
@@ -37,8 +37,10 @@ test: $(TARGET) unit-test build/source_interface-test
 	./build/source_interface-test
 	bash tests/smoke.sh
 	bash tests/sleep_states.sh
+ssh-test: build/ssh_transport-test
+	python3 tests/ssh_transport.py
 sanitize:
 	$(MAKE) clean
 	$(MAKE) CFLAGS='-std=c11 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wpedantic -Wformat=2 -Werror=format-security' LDFLAGS='-fsanitize=address,undefined' test
 clean:
-	rm -rf build/obj build/dpdp build/source_interface-test $(TESTS:%=build/%-test)
+	rm -rf build/obj build/dpdp build/source_interface-test build/ssh_transport-test $(TESTS:%=build/%-test)

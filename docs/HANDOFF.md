@@ -63,14 +63,16 @@ unit checks used ASAN_OPTIONS=detect_leaks=0 because /proc inspection is blocked
 Early draft CI failures were real (missing dependencies initially, then the UNKNOWN
 PEM reload defect); do not report those drafts as passed. Check the latest PR run for
 full normal/TCP/UDP and sanitizer evidence. CI uses default leak detection.
-No physical Debian/Android tests or actual remote sshd transfer tests occurred.
-Access tests use real SSH key generation with a controlled executable fixture;
-real SSH/SFTP behavior still depends on each device's sshd configuration.
+No physical Debian/Android tests occurred. Access unit tests use controlled SSH
+executables; tests/ssh_transport.py additionally starts an isolated real Linux sshd
+in CI and exercises native helpers, pinned SSH, shared masters, SFTP and binary
+file round trips. Inspect its latest CI step before claiming it passed. Physical
+SSH/SFTP behavior still depends on each device's sshd configuration.
 
 Changed files: Makefile/.gitignore/CI, src/dpdp.c plus the new security/access
 source/header modules, scripts/build-pake.sh and install.sh, tests/security.c,
 pairing.c, authorization.c, access.c, source_interface.c, runtime_lock.sh,
-pair_cli.py and smoke.sh; README, architecture, plan, design and this handoff.
+pair_cli.py, ssh_transport.c/py and smoke.sh; README, architecture, plan, design and this handoff.
 
 ## Remaining boundaries and next work
 
