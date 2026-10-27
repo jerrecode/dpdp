@@ -6,3 +6,16 @@ peers.json
 peers.json.lock
 *.id
 __pycache__/
+# Private identities and local pairing/access state
+*.signing.pem
+*.signing.pem.lock
+*.paired.json
+*.paired.json.lock
+*.ssh
+*.ssh.pub
+*.ssh.lock
+*.access.json
+*.known-*
+*.run.lock
+*.pairing.lock
+cm-*.owner

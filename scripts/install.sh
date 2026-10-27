@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ACTION=${1:-help}; (($#==0)) || shift
-IFACE=''; SSID=''; AUTOSTART=1; WIFI_SETUP=1; LINGER=1; YES=0
+IFACE=''; SSID=''; AUTOSTART=1; WIFI_SETUP=1; LINGER=1; YES=0; ENABLE_SSH=0
 while (($#)); do
  case "$1" in
   --interface) IFACE=${2:?};shift 2;;
@@ -12,6 +12,7 @@ while (($#)); do
   --no-wifi-config) WIFI_SETUP=0;shift;;
   --no-linger) LINGER=0;shift;;
   --yes) YES=1;shift;;
+  --enable-ssh) ENABLE_SSH=1;shift;;
   -h|--help) ACTION=help;shift;;
   *) echo "Unknown argument: $1" >&2;exit 2;;
  esac
@@ -40,16 +41,16 @@ deps(){
      pkg install -y termux-api coreutils
    fi
  fi
- if need cc && need make && need pkg-config && pkg-config --exists json-c;then return;fi
+ if need cc && need c++ && need cmake && need git && need flock && need ssh-keygen && need make && need pkg-config && pkg-config --exists json-c gnutls;then return;fi
  if ((TERMUX));then
-   log 'Installing Termux clang, make, pkg-config, json-c and termux-api'
-   pkg install -y clang make pkg-config json-c termux-api
+   log 'Installing native build, crypto, SSH and Termux API dependencies'
+   pkg install -y clang make cmake git pkg-config json-c libgnutls openssh util-linux termux-api
  else
    if ((!YES)) && [[ -t 0 ]];then
       read -r -p 'Install build dependencies using sudo apt? [y/N] ' a
       [[ $a == [Yy] ]] || exit 1
    fi
-   sudo apt-get update;sudo apt-get install -y build-essential pkg-config libjson-c-dev
+   sudo apt-get update;sudo apt-get install -y build-essential cmake git pkg-config libjson-c-dev libgnutls28-dev openssh-client
  fi
 }
 find_iface(){
@@ -139,12 +140,26 @@ sleep_wrong_wifi_seconds=15
 EOT
  log "Initialized $CONF"
 }
+setup_access(){
+ ((ENABLE_SSH)) || return 0
+ if ((TERMUX));then
+  ssh-keygen -A
+  "$BIN" access-init "$PREFIX/etc/ssh/ssh_host_ed25519_key.pub" 8022
+  if ! pgrep -x sshd >/dev/null 2>&1;then sshd;fi
+ else
+  sudo apt-get install -y openssh-server
+  sudo systemctl enable --now ssh
+  "$BIN" access-init /etc/ssh/ssh_host_ed25519_key.pub 22
+ fi
+ log 'SSH offer enabled for your account; new pairings may receive account-level SSH/SFTP access'
+}
 autostart(){
  ((AUTOSTART)) || return 0
  if ((TERMUX));then
   mkdir -p "$HOME/.termux/boot"
   cat > "$HOME/.termux/boot/90-dpdp" <<EOT
 #!${PREFIX}/bin/sh
+$( [[ -f $CONF.access.json ]] && printf '%s' "'$PREFIX/bin/sshd' 2>/dev/null || :" )
 exec '$BIN' run --config '$CONF' >> '$STATE/termux.log' 2>&1
 EOT
   chmod 700 "$HOME/.termux/boot/90-dpdp"
@@ -170,7 +185,8 @@ PrivateTmp=true
 WantedBy=default.target
 EOT
   systemctl --user daemon-reload
-  systemctl --user enable --now dpdp.service || log 'Could not start user systemd service; run systemctl --user status dpdp.service'
+  systemctl --user enable dpdp.service
+  systemctl --user restart dpdp.service || log 'Could not start user systemd service; run systemctl --user status dpdp.service'
   if ((LINGER)) && need loginctl;then
    if sudo -n loginctl enable-linger "$(id -un)" 2>/dev/null;then
     log 'Enabled boot service without graphical login (linger)'
@@ -189,7 +205,8 @@ install: builds, detects USB Wi-Fi, uses saved reachable NM profile, enables sta
 build: build only | update: fast-forward git update and reinstall
 uninstall: removes binary and startup, preserves peers/config/identity
 diagnose: read-only adapter, USB, profiles, routes, startup status
-Options: --interface IFACE --ssid SSID --no-wifi-config --no-autostart --no-linger --yes
+Options: --interface IFACE --ssid SSID --no-wifi-config --no-autostart --no-linger --yes --enable-ssh
+--enable-ssh: explicitly enable sshd and account-level access offers before pairing
 HELP
  ;;
  diagnose) exec bash "$ROOT/scripts/diagnose.sh";;
@@ -201,9 +218,10 @@ HELP
   fi
   deps;make -C "$ROOT" all
   mkdir -p "$(dirname "$BIN")";install -m 0755 "$ROOT/build/dpdp" "$BIN"
+  install -D -m 0644 "$ROOT/build/vendor/boringssl/LICENSE" "$HOME/.local/share/dpdp/licenses/BoringSSL-LICENSE"
   find_iface;phone_ssid;setup_wifi;config_write
   "$BIN" init --config "$CONF"
-  autostart
+  setup_access;autostart
   log "Done. Peer registry: $STATE/peers.json"
  ;;
  uninstall)

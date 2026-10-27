@@ -33,7 +33,7 @@ if ((seen==0));then
  cat "$TEMP/a/log" "$TEMP/b/log" >&2
  exit 1
 fi
-# Locally authorized hook should start once; the process receives peer IP in env.
+# Locally configured hooks must stay blocked until cryptographic pairing/verification.
 cat > "$TEMP/hook.sh" <<'HOOK'
 #!/bin/sh
 printf '%s\n' "$DPDP_PEER_IP" >> "$DPDP_TEST_HOOK_MARKER"
@@ -42,23 +42,37 @@ chmod +x "$TEMP/hook.sh"
 export DPDP_TEST_HOOK_MARKER="$TEMP/hook.log"
 # Modify a user-controlled section and ensure discovery refresh leaves it intact.
 python3 - "$TEMP/a/peers.json" "$TEMP/hook.sh" <<'PY'
-import json,sys
+import fcntl,json,os,sys,tempfile
 p=sys.argv[1]
+lock=open(p+".lock","a+");fcntl.flock(lock,fcntl.LOCK_EX)
 o=json.load(open(p));peer=next(iter(o['peers'].values()))
 peer['trusted']=True
 peer['services']=[{'name':'example','exec':sys.argv[2],'args':[],'enabled':True}]
 peer['custom']={'preserved':'yes'}
-with open(p,'w') as f:json.dump(o,f)
+with tempfile.NamedTemporaryFile('w',dir=os.path.dirname(p),delete=False) as f:
+ json.dump(o,f);f.flush();os.fsync(f.fileno());tmp=f.name
+os.replace(tmp,p)
 PY
 sleep 4
+test ! -f "$TEMP/hook.log"
+printf 'OK: trusted flag alone cannot execute a hook before pairing\n'
+python3 "$ROOT/tests/pair_cli.py" "$DPDP" "$TEMP/a/config" "$TEMP/b/config" smoke-b
+for i in {1..50};do
+ if [[ -f "$TEMP/hook.log" ]];then break;fi
+ sleep 0.1
+done
 python3 - "$TEMP/a/peers.json" <<'PY'
 import json,sys
 o=json.load(open(sys.argv[1]));p=next(iter(o['peers'].values()))
 assert p['services'][0]['name']=='example', p
 assert p['custom']['preserved']=='yes', p
 assert p['online'] is True, p
+assert p['authenticated'] is True, p
 print('OK: discovery, identity, atomic registry and preservation')
 PY
 test -f "$TEMP/hook.log"
 test "$(wc -l < "$TEMP/hook.log")" -eq 1
-printf 'OK: trusted local service launched exactly once with peer IP\n'
+printf 'OK: local logical nodes pair and authenticate; distinct-IP recovery is also tested in namespaces\n'
+# Explicit code-authenticated repair must contact the server even with local pins.
+python3 "$ROOT/tests/pair_cli.py" "$DPDP" "$TEMP/a/config" "$TEMP/b/config" smoke-b
+printf 'OK: explicit pairing retry completes with already pinned identities\n'

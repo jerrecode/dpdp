@@ -1,19 +1,29 @@
 name: Linux C CI
 on:
   push:
+    branches: [main]
   pull_request:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libjson-c-dev pkg-config make gcc python3 iproute2
+        run: sudo apt-get update && sudo apt-get install -y libjson-c-dev libgnutls28-dev cmake git pkg-config make gcc g++ openssh-client openssh-server python3 iproute2 iptables
       - name: Build
         run: make
       - name: Validate installer syntax
-        run: bash -n scripts/install.sh scripts/diagnose.sh tests/smoke.sh tests/sleep_states.sh
+        run: bash -n scripts/install.sh scripts/diagnose.sh tests/smoke.sh tests/sleep_states.sh tests/runtime_lock.sh tests/network_namespaces.sh scripts/build-pake.sh
       - name: Integration test
         run: make test
+      - name: Distinct-IP authenticated discovery and address changes
+        run: make namespace-test
+      - name: Real SSH and SFTP transport
+        run: make ssh-test
       - name: Address and undefined behavior sanitizers
         run: make sanitize
+      - name: Sanitized SSH and SFTP transport
+        run: make CFLAGS='-std=c11 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wpedantic' LDFLAGS='-fsanitize=address,undefined' ssh-test
+      - name: Sanitized distinct-IP discovery and address changes
+        run: make CFLAGS='-std=c11 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wpedantic' LDFLAGS='-fsanitize=address,undefined' namespace-test

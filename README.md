@@ -1,81 +1,174 @@
 # DPDP — Dynamic Peer Discovery Protocol
 
-A small, decentralized **C** daemon for recognizing machines on the same IPv4 multicast-capable LAN despite DHCP address changes. Built for **Debian Linux** and **Android/Termux** with no root requirement for discovery. Each node is symmetric: it sends discovery messages, responds to queries, and maintains a local peer registry. No coordinator or Internet service is required for peer discovery.
+DPDP finds your Debian computer and Android/Termux phone on the same IPv4 LAN,
+pairs them with a six-digit code, and verifies saved cryptographic identities when
+their addresses change. No central discovery server or Internet connection is
+required after installation. It provides native C discovery/pairing and uses
+OpenSSH for persistent connections, SSH control, SFTP browsing, file transfer and
+optional TCP forwarding.
 
-> **Maturity:** early functional release, **not a secure authentication protocol**. Test on trusted LANs first. The implementation currently supports IPv4 only. Android background scheduling, Wi-Fi multicast delivery, and NetworkManager integration depend on the device, permissions and AP settings.
+**Status:** experimental cryptographic protocol integration, not an independently
+audited product. Upgrade both devices before relying on pairing. Physical USB
+Wi-Fi, Android Doze and background/multicast behavior still need device testing.
+Names help you recognize devices; they never establish trust by themselves.
 
-## How it works
+## Install on Debian
 
-- Every installation gets a random 128-bit persistent node ID, stored as `<config file>.id` (mode 0600). Concurrent initializers use an advisory `<config file>.id.lock` to agree on one ID. Existing invalid or unreadable identities are preserved and initialization fails for operator recovery. That ID, **not a DHCP address**, is the peer identity.
-- DPDP periodically multicasts short query/announcement messages to `239.255.77.81:47981` (TTL 1). Queries are answered with unicast announcements. Responses are processed only on the selected network interface using Linux `IP_PKTINFO`. The IP address in the registry comes from the actual UDP packet source, not untrusted payload text.
-- A changing interface address causes the daemon to reopen its bound discovery socket and announce again. Periodic discovery also recovers after **both peers** change addresses simultaneously.
-- Peers become offline when no packets arrive for the configured timeout. The registry retains their identity, last endpoint, and **all locally edited metadata**.
-- `peers.json` is updated via an advisory lock, a same-directory temporary file, `fsync`, and atomic rename. The daemon re-reads the existing registry before every write, preserving `services`, `trusted` and custom peer fields. Applications should use the lock file when modifying the registry concurrently; uncoordinated editors can otherwise lose a simultaneous edit.
-- Optional executable service hooks run **once per peer/endpoint transition within a daemon session**. Only locally configured, explicitly `trusted` peers can trigger them. The wire protocol has **no command-execution field**. Commands use direct `execv`, not a shell; local service scripts can connect or exchange data using environment variables.
-
-## Download
+Run installation from your normal account. Do not run the whole installer as root.
+It requests sudo only for dependency/service setup.
 
 ```sh
 git clone https://github.com/jerrecode/dpdp.git
 cd dpdp
+bash scripts/install.sh diagnose
+bash scripts/install.sh install --enable-ssh
 ```
 
-You need an IP LAN where peers can deliver UDP multicast/unicast to each other. Access-point client isolation, firewalls and separate VLANs can prevent discovery even when SSIDs look identical.
+`--enable-ssh` explicitly installs/enables the Debian SSH server and allows future
+successful pairings to receive SSH/SFTP access to **your user account**. It does
+not grant root or bypass sudo. Omit it for discovery/pairing without inbound SSH.
+To enable later, rerun installation with this option, run explicit pair-server/pair again so the
+new SSH offer is exchanged. Explicit `pair` retries authenticate the code again
+even when the local side already has a matching pin.
 
-## Debian installation
-
-Run from **your own account**, not under `sudo` (the installer requests elevated privileges only when needed).
+The installer prefers a unique USB Wi-Fi adapter and reuses saved NetworkManager
+credentials. Multiple choices require selection. It clones the selected profile
+and sets IPv4/IPv6 `never-default` to preserve an existing Ethernet Internet route.
+It does not invent missing Ethernet routing or change firewall rules. For explicit
+selection or independently managed networking:
 
 ```sh
-bash scripts/install.sh diagnose  # read-only: adapters, USB, routes, saved Wi-Fi profile names
-bash scripts/install.sh install
+bash scripts/install.sh install --interface wlx0123456789ab --ssid 'YOUR_WIFI' --enable-ssh
+bash scripts/install.sh install --interface wlan0 --no-wifi-config
 ```
 
-The installer builds the C program, prefers the **USB Wi-Fi adapter**, offers an adapter picker when necessary, scans the Wi-Fi networks, and matches them against **existing NetworkManager profiles**. It will auto-select a unique matching profile or ask you to choose among several. It does **not extract saved passwords** or attempt to guess the phone's SSID. If there are multiple matches, select the SSID your phone uses. For an explicit selection:
+The systemd user service starts at login, or at boot if linger is enabled. Verify
+with `systemctl --user status dpdp.service` and `journalctl --user -u dpdp.service`.
+Actual routing and DNS behavior must be checked on the physical machine.
 
-```sh
-bash scripts/install.sh install --interface wlx0123456789ab --ssid 'PHONE_WIFI_SSID'
-```
+## Install on Android / Termux
 
-For the selected saved network it **clones** the NetworkManager profile into `dpdp-IFACE-UUID`, binds the clone to the selected Wi-Fi adapter, enables autoconnect, and sets both `ipv4.never-default` and `ipv6.never-default`. This prevents the Wi-Fi connection becoming the default Internet route; the existing wired Ethernet route remains unchanged. If Ethernet does not already have a working default route, the installer cannot create one safely without knowing your network. Check `ip route` and adjust your Ethernet profile if needed.
-
-If NetworkManager is not managing the Wi-Fi adapter, the installer skips Wi-Fi configuration; configure your Wi-Fi independently. Use `--no-wifi-config` to leave all NetworkManager profiles untouched. Non-interactive installations with ambiguous choices require explicit `--interface`/`--ssid`.
-
-On Debian the user service is `~/.config/systemd/user/dpdp.service`. The installer enables and starts it. It tries to enable systemd **linger** (via `sudo loginctl enable-linger USER`) so it starts without a desktop login, otherwise it starts when the user session starts.
-
-```sh
-systemctl --user status dpdp.service
-journalctl --user -u dpdp.service -f
-systemctl --user restart dpdp.service
-```
-
-## Android / Termux installation
-
-Install Termux from a compatible source, alongside **Termux:API** and **Termux:Boot** from the same signing ecosystem. Launch the two Android add-ons at least once and grant the required location / Wi-Fi permissions. Then in Termux:
+Use compatible Termux, Termux:API and Termux:Boot add-ons from the same signing
+source. Open the add-ons once and grant Android's Wi-Fi/location permissions.
 
 ```sh
 pkg install git
-termux-wifi-connectioninfo   # verifies API accessibility and current SSID
-# clone the repository as shown above
-bash scripts/install.sh install --ssid 'PHONE_WIFI_SSID'
+git clone https://github.com/jerrecode/dpdp.git
+cd dpdp
+bash scripts/install.sh install --ssid 'YOUR_WIFI' --enable-ssh
 ```
 
-The installer can detect the current SSID from `termux-wifi-connectioninfo`; if Android hides the SSID, pass it explicitly with `--ssid`. **An expected SSID is required for safe Termux installation.** A `~/.termux/boot/90-dpdp` script starts DPDP after Android boot once Termux:Boot is configured and the OS permits it. No root required.
+This installs native build/crypto tools and starts Termux's sshd on its standard
+port **8022** when SSH was enabled. The boot entry restarts sshd and DPDP when
+Termux:Boot and Android permit. On Debian the standard SSH port is **22**. No root
+or permanent wake lock is required. Android storage and background restrictions
+still apply; pairing does not expose files Termux cannot normally access.
 
-Termux uses the Android `termux-wifi-connectioninfo` API to distinguish:
+If the Termux daemon is not already running, start it in a second Termux session:
 
-| Network state | Default reconnection check | Discovery behavior |
-|---|---:|---|
-| No Wi-Fi IP / no connection | Every 60 s | No packets sent |
-| Connected to a different SSID | Every 15 s | No packets sent |
-| Correct Wi-Fi SSID | Every 5 s | Listen continuously while Android schedules Termux; send discovery every 15 s |
-| SSID API unavailable | Every 15 s | Fail closed: no packets sent |
+```sh
+"$HOME/.local/bin/dpdp" run
+```
 
-All sleep durations are configurable in the config file. **Important:** These are daemon *polling/sleep intervals*, **not an Android AlarmManager wake-up guarantee**. Without a persistent wake-lock the OS may defer or suspend background work. We intentionally avoid an always-on wake-lock by default to reduce battery usage. Adjust Android battery restrictions if continuous availability matters more than battery life. Termux cannot silently switch the phone to a saved Wi-Fi network on modern unrooted Android; reconnection is handled by Android.
+Or reboot after enabling Termux:Boot. Keep one daemon per configuration; the new
+runtime rejects duplicate instances. **When upgrading the old pre-pairing Termux
+version, stop that old process or reboot once** so it cannot continue its legacy
+unauthenticated hook policy. Debian updates restart the systemd service.
 
-## Configuration / manual operation
+Both devices need the same reachable LAN. AP client isolation, firewalls and
+separate VLANs can prevent UDP discovery or the temporary TCP pairing connection.
 
-Default config: `~/.config/dpdp/config`; default registry: `~/.local/state/dpdp/peers.json`. Environment variables `XDG_CONFIG_HOME` and `XDG_STATE_HOME` are supported. Key settings:
+## Pair once using the six-digit code
+
+The boot daemon has no interactive terminal. Keep it running and open a terminal
+on each device for the pairing assistant:
+
+```sh
+"$HOME/.local/bin/dpdp" pair-watch
+```
+
+On Debian, a newly discovered unpaired device causes a fresh **six-digit code** to
+be displayed. On Termux, the assistant reports the new device and prompts you to
+enter the code shown on your Debian screen. A window permits three connection
+attempts and lasts at most 120 seconds. The code is temporary and is not sent over
+the network; SPAKE2 authenticates a TLS 1.3 pairing channel. Public signing and SSH
+keys are exchanged inside it with proofs bound to that channel.
+
+You can instead pair one device explicitly. On Debian:
+
+```sh
+"$HOME/.local/bin/dpdp" pair-server
+```
+
+On Termux, use the discovered Debian name or full node ID:
+
+```sh
+"$HOME/.local/bin/dpdp" status
+"$HOME/.local/bin/dpdp" pair my-debian
+"$HOME/.local/bin/dpdp" paired
+```
+
+Leading zeroes in the code matter. Identical reported names are ambiguous: use the
+full ID shown by `status` or `paired`. A known name with a different identity needs
+pairing again. If one side reports success while the other fails, rerun explicit
+`pair-server` / `pair NAME`; a local record is not proof both commits completed.
+Incomplete enrollments stay pending and can be retried; a different
+key can never silently overwrite an existing pinned identity. Key rotation to a
+new node identity requires explicit new pairing; there is no automatic key rollover.
+
+After pairing, press Ctrl+C to close the two assistants; discovery continues.
+
+After pairing, the background daemons verify each other silently with fresh signed
+challenges. `status` records `authenticated: true` only after a verified endpoint
+response. Legacy discovery remains visible as unverified information; it cannot
+launch hooks or overwrite an authenticated endpoint.
+
+## SSH, files and filesystem access
+
+Use the saved name or full ID after authenticated discovery. These helpers require
+OpenSSH 9 or later and a running sshd with an SSH offer exchanged during pairing.
+They pin the exchanged Ed25519 SSH host key and use a dedicated client key: no
+password prompts, trust-on-first-use fallback or disabled host-key verification.
+
+```sh
+"$HOME/.local/bin/dpdp" ssh my-debian
+"$HOME/.local/bin/dpdp" ssh my-debian -- uname -a
+"$HOME/.local/bin/dpdp" sftp my-debian
+"$HOME/.local/bin/dpdp" send my-debian ./photo.jpg /home/myuser/Pictures/photo.jpg
+"$HOME/.local/bin/dpdp" receive my-debian /home/myuser/report.txt ./report.txt
+"$HOME/.local/bin/dpdp" forward my-debian 8080:127.0.0.1:8080
+```
+
+SFTP opens an interactive filesystem browser/transfer prompt. Paths and permissions
+are those of the paired account; Android shared storage may require
+`termux-setup-storage`. This is not a root filesystem mount or unrestricted Android
+storage access. Forwarding explicitly carries another TCP application through SSH;
+DPDP does not implement that application's protocol.
+
+The daemon starts at most eight managed SSH masters for peers offering SSH. Several
+SSH/SFTP/file-transfer channels can share a master. Failed masters retry after 30
+seconds. `auto_ssh=0` disables automatic masters while preserving explicit commands.
+Each master is tied to the pinned identity and verified endpoint. Upon an IP change,
+signed unicast hints to remembered peers accelerate a fresh challenge/response;
+periodic multicast handles missed hints and simultaneous changes. A new master
+replaces the old endpoint. **Existing TCP streams and active transfers cannot be
+transparently migrated**; retry interrupted transfers/commands.
+
+For independently configured sshd, explicitly publish its Ed25519 host public key
+and port before pairing (the account name comes from your local user):
+
+```sh
+"$HOME/.local/bin/dpdp" access-init /etc/ssh/ssh_host_ed25519_key.pub 22
+# Termux: use "$PREFIX/etc/ssh/ssh_host_ed25519_key.pub" and port 8022
+```
+
+`access-init` does not itself start sshd. Existing custom SSH configurations must
+allow the selected account, Ed25519 keys, SFTP and any forwarding you need.
+
+## Configuration, persistence and revocation
+
+Default config: `~/.config/dpdp/config`; peer status:
+`~/.local/state/dpdp/peers.json`. `XDG_CONFIG_HOME`/`XDG_STATE_HOME` are supported.
 
 ```ini
 interface=wlan0
@@ -87,76 +180,97 @@ announce_seconds=15
 expiry_seconds=70
 sleep_no_wifi_seconds=60
 sleep_wrong_wifi_seconds=15
+auto_ssh=1
 ```
 
-`expected_ssid` enforcement is implemented on Termux using Termux:API. On Debian the installer selects the saved Wi-Fi profile; the daemon binds to the interface but does **not** independently verify the SSID. Restrict your NetworkManager clone to the intended profile if necessary. Config values have straightforward `key=value` syntax (not shell commands; no quoting/escaping). Restart after editing.
+UDP uses the configured port; foreground pairing temporarily listens on TCP
+**port plus one**, bound to the selected interface address. Signed unicast traffic
+explicitly selects that interface/source IP, including when Ethernet has a preferred
+route. No pairing TCP listener runs in the boot daemon.
+
+Termux verifies `expected_ssid` using Termux:API: no Wi-Fi retries every 60 seconds;
+wrong/unverifiable SSID every 15 seconds; connected state checks every five seconds.
+These are application sleep intervals, not guarantees of execution through Doze.
+Debian binds the chosen adapter; SSID selection is managed by NetworkManager.
+
+Files next to the config include `.id` (stable legacy node ID), `.signing.pem`
+(private Ed25519 key), `.paired.json` (pinned public identities and SSH offers),
+`.ssh`/`.ssh.pub` (dedicated SSH client key), and optional `.access.json` (local SSH
+offer). Preserve these when updating/backing up; keep private files private. Pairing
+and identity writes use cooperative locks, fsync and atomic rename. Existing peer
+registry metadata and service definitions are retained.
 
 ```sh
-~/.local/bin/dpdp init
-~/.local/bin/dpdp run --config "$HOME/.config/dpdp/config" --debug
-~/.local/bin/dpdp status
+"$HOME/.local/bin/dpdp" unpair my-phone
 ```
 
-## Peer registry and external services
+Unpairing revokes native discovery authorization, cancels pending enrollments,
+removes DPDP-managed authorized_keys lines and requests closure of **local outbound**
+DPDP SSH masters. Running/starting helpers recheck authorization every second while
+scheduled and stop their SSH child if revoked or the verified endpoint changes.
+It does **not** terminate already authenticated inbound sshd
+connections or their channels: those sessions are managed by the external SSH
+server and require separate server-side termination if immediate cutoff matters.
+Revocation is therefore a ban on new authentication, not a universal session kill.
 
-The registry is automatically created, even with no peers. After discovery, it looks like:
+Updates preserve configuration. Uninstall preserves identities, pairings and SSH
+settings; unpair devices first if you also want their managed SSH keys removed.
+The independently enabled SSH server remains enabled; disable it separately if desired.
+
+## Local service hooks
+
+Within a peer object in `peers.json`, keep local-only definitions such as:
 
 ```json
-{
-  "schema_version": 1,
-  "peers": {
-    "my-phone": {
-      "id": "00112233445566778899aabbccddeeff",
-      "name": "my-phone",
-      "ip": "192.168.1.42",
-      "online": true,
-      "last_seen_unix": 1790000000,
-      "trusted": false,
-      "services": []
-    }
-  }
-}
+{"trusted":true,"services":[{"name":"connector","enabled":true,"exec":"/absolute/path/to/connector","args":["--mode","client"]}]}
 ```
 
-Peer keys normally match peer-advertised names. If names collide, DPDP adds the full identity as a suffix and, if necessary, a numeric suffix to select a free key. Existing keys are labels, never authorization identifiers. Names can change; IDs remain stable. If you edit the registry, do not change IDs or the machine-managed `name`, `ip`, `online`, and `last_seen_unix` fields. Add services like:
+This is a peer-object fragment. Hooks require **both** current cryptographic
+endpoint verification and a local boolean `trusted=true`. Executables are never
+received from the network. Direct `execv` supplies `DPDP_PEER_ID`, `DPDP_PEER_NAME`,
+`DPDP_PEER_IP`, and `DPDP_DISCOVERY_PORT`. Active hook children are capped at 32.
+Hooks remain one-shot transition notifications, not fully supervised services;
+make them idempotent. Cooperating editors must lock `<registry>.lock` and atomically
+replace the file to avoid lost concurrent edits.
 
-```json
-"trusted": true,
-"services": [
-  {
-    "name": "my-local-connector",
-    "enabled": true,
-    "exec": "/home/myuser/bin/connect-to-peer",
-    "args": ["--mode", "client"]
-  }
-]
-```
+## Build, tests, updating and uninstalling
 
-This is a **fragment inside one peer object**, not a complete JSON document. `exec` must be an **absolute executable path**. Up to 16 enabled/disabled service definitions are inspected per peer, with at most 24 explicit arguments each. An executable receives `DPDP_PEER_ID`, `DPDP_PEER_NAME`, `DPDP_PEER_IP` and `DPDP_DISCOVERY_PORT` as environment variables. Its network application protocol and TCP/UDP ports are the responsibility of that service. A service starts when its peer is seen online and trusted; an IP change can trigger another launch. DPDP does **not** supervise child services or guarantee exactly-once execution across daemon restarts. Design hooks to be idempotent and to handle reconnects; a service can run as a persistent process if it manages its own lifecycle.
+Debian dependencies: C11/C++17 compilers, make, CMake 3.22+, git, pkg-config,
+json-c/GnuTLS development packages and OpenSSH. Termux equivalents are installed
+by the installer. Python is used only by development tests, not the runtime.
 
-A service will not execute just because a stranger advertises an ID. You must manually authorize that ID with `trusted=true` and add an executable; **however, the current wire messages are unauthenticated and can be spoofed on a hostile LAN**, even for a trusted ID. Avoid dangerous hooks until cryptographic mutual authentication is implemented.
-
-Editing `peers.json` by writing a replacement in place can race with the daemon. For safe automation, obtain an exclusive `flock` on `<registry>.lock`, read/modify the JSON object, write a same-directory temporary file, flush, rename atomically, release the lock. DPDP itself uses this procedure. To share discovery state with applications, watch or parse this JSON file, or consume your own service's environment variables.
-
-## Build, test, update and uninstall
+The first build fetches a fixed BoringSSL commit and builds its static crypto
+library for SPAKE2. This needs Internet once and takes longer than rebuilding DPDP.
+The version is pinned in `scripts/build-pake.sh`; no cryptographic primitives are
+implemented by DPDP. `make clean` retains the cached dependency build. GnuTLS and
+json-c remain shared runtime dependencies; the C++ linker handles the upstream
+static crypto library. Upstream license notices are retained in its build directory.
 
 ```sh
-make                 # C compiler, make, pkg-config and json-c required
-make unit-test       # registry, identity concurrency and packet parsing; no network required
-make test            # two local daemon processes plus mocked Android SSID states; requires Python 3 for registry assertions
-make sanitize        # ASan/UBSan build of daemon AND tests, then full suite
-bash scripts/install.sh update           # git pull --ff-only + rebuild + reinstall
-bash scripts/install.sh uninstall        # preserves config, identity, peer registry
+make
+make unit-test
+make test
+make sanitize
+make ssh-test        # optional Linux-only real sshd test; normal account + passwordless sudo
+make namespace-test  # optional Linux network namespaces; passwordless sudo
+bash scripts/install.sh update
+bash scripts/install.sh uninstall
 ```
 
-Build dependencies: Debian `build-essential pkg-config libjson-c-dev`; Termux `clang make pkg-config json-c`. Installer offers to install missing dependencies. Runtime dependency: `json-c`. Termux CLI `termux-api` additionally requires the Android Termux:API app and permissions.
+Tests cover real PAKE/TLS exchanges, wrong code, wrong target, pending retry,
+forged/replayed/stale endpoint proofs, name collisions, pinning/revocation, legacy
+hook denial, SSH pin arguments/authorization cleanup, explicit unicast source IP,
+real TCP pairing plus two-process UDP discovery, and an optional isolated loopback
+sshd test for actual SSH/SFTP/file transfers in CI. ASan/UBSan instrument
+DPDP and its test binaries; dependency libraries use their own upstream builds.
 
-## Limitations / security
+For read-only diagnosis:
 
-**This version does not support** IPv6 discovery, mDNS/DNS-SD service advertisement, encryption, cryptographic peer verification, AP isolation traversal, routing across subnets, robust kernel netlink event subscriptions, privilege-separated hook execution, authenticated remote service handshakes, or true Android suspend-resilient wake scheduling. The protocol is intentionally confined to IPv4 link-local multicast scope (TTL=1). `online` means *recently heard*, not cryptographically authenticated or proof that an arbitrary downstream service is accepting connections. Do not automatically open firewall ports, change the Ethernet default route or trust discovered peers. Service hooks must be treated as privileged local configuration.
+```sh
+bash scripts/install.sh diagnose > dpdp-diagnostics.txt 2>&1
+```
 
-Read `docs/ARCHITECTURE.md` and `docs/PLAN.md` for design choices and outstanding production hardening.
+Review IP addresses and device names before sharing. See `docs/ARCHITECTURE.md`,
+`docs/PLAN.md` and `docs/HANDOFF.md` for protocol details and remaining work.
 
-## License
-
-MIT License, see [LICENSE](LICENSE).
+MIT license for DPDP; upstream dependency licenses remain their own.
