@@ -868,10 +868,15 @@ static void recv_one(void) {
             peer_t *p = upsert(frame.id, frame.name, frame.ip);
             if (p && mono_ms() - p->reply_ms >= 1000) {
                 p->reply_ms = mono_ms();
+                /* Local logical nodes share one IP/port: SO_REUSEPORT unicast
+                   cannot address a particular process. Multicast the nonce-bound
+                   response in this case; only the intended challenge can confirm. */
+                const struct sockaddr_in *reply =
+                    sender.sin_addr.s_addr == cur_ip.s_addr ? NULL : &sender;
                 if (frame.kind == 'Q')
-                    send_secure('A', frame.nonce, &sender);
+                    send_secure('A', frame.nonce, reply);
                 else
-                    send_secure('Q', "-", &sender);
+                    send_secure('Q', "-", reply);
             }
         }
         return;
@@ -1140,14 +1145,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(action, "pair") && count == 1) {
             char id[33], ip[16];
             if (candidate(positional[0], id, ip) == 0) {
-                struct json_object *known = sec_find(&security, id);
-                if (known) {
-                    message("info", "already paired; normal discovery verifies keys automatically; "
-                                    "unpair first to renew SSH offers");
-                    json_object_put(known);
-                    rc = 0;
-                } else
-                    rc = sec_pair_cli(&security, 0, bind_ip, ip, cfg.port + 1, id);
+                /* Explicit repair is code-authenticated even when one side already
+                   committed. Normal discovery still reconnects without prompts. */
+                rc = sec_pair_cli(&security, 0, bind_ip, ip, cfg.port + 1, id);
             }
         } else if (count >= 1)
             rc = access_command(&security, action, positional[0], count - 1, positional + 1);

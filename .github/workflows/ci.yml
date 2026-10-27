@@ -14,12 +14,16 @@ jobs:
       - name: Build
         run: make
       - name: Validate installer syntax
-        run: bash -n scripts/install.sh scripts/diagnose.sh tests/smoke.sh tests/sleep_states.sh tests/runtime_lock.sh scripts/build-pake.sh
+        run: bash -n scripts/install.sh scripts/diagnose.sh tests/smoke.sh tests/sleep_states.sh tests/runtime_lock.sh tests/network_namespaces.sh scripts/build-pake.sh
       - name: Integration test
         run: make test
+      - name: Distinct-IP authenticated discovery and address changes
+        run: make namespace-test
       - name: Real SSH and SFTP transport
         run: make ssh-test
       - name: Address and undefined behavior sanitizers
         run: make sanitize
       - name: Sanitized SSH and SFTP transport
         run: make CFLAGS='-std=c11 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wpedantic' LDFLAGS='-fsanitize=address,undefined' ssh-test
+      - name: Sanitized distinct-IP discovery and address changes
+        run: make CFLAGS='-std=c11 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wpedantic' LDFLAGS='-fsanitize=address,undefined' namespace-test

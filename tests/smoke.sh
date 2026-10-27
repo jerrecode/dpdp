@@ -57,9 +57,9 @@ sleep 4
 test ! -f "$TEMP/hook.log"
 printf 'OK: trusted flag alone cannot execute a hook before pairing\n'
 python3 "$ROOT/tests/pair_cli.py" "$DPDP" "$TEMP/a/config" "$TEMP/b/config" smoke-b
-for i in {1..25};do
- [[ -f "$TEMP/hook.log" ]] && break
- sleep 1
+for i in {1..50};do
+ if [[ -f "$TEMP/hook.log" ]];then break;fi
+ sleep 0.1
 done
 python3 - "$TEMP/a/peers.json" <<'PY'
 import json,sys
@@ -72,4 +72,4 @@ print('OK: discovery, identity, atomic registry and preservation')
 PY
 test -f "$TEMP/hook.log"
 test "$(wc -l < "$TEMP/hook.log")" -eq 1
-printf 'OK: paired, authenticated local service launched once with verified peer IP\n'
+printf 'OK: local logical nodes pair and authenticate; distinct-IP recovery is also tested in namespaces\n'

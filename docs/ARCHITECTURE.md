@@ -83,6 +83,9 @@ also recovers simultaneous address changes and missed hints. Both multicast and
 unicast sends use `sendmsg(IP_PKTINFO)` to select source IP **and** interface;
 `IP_MULTICAST_IF` alone would not constrain unicast replies on a dual-NIC PC.
 Receive-side IP_PKTINFO filters other interfaces. Control buffers are aligned.
+For multiple local logical nodes sharing one IP/port, signed replies multicast
+because SO_REUSEPORT unicast cannot select a process; nonce binding selects the
+intended receiver. Physical distinct-IP peers retain unicast replies.
 
 Input processing is capped at 32 packets/second; signed query/hint responses at
 one per peer/second. State is capped at 128 peers/pins. Paired peers may evict

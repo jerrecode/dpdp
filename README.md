@@ -27,8 +27,9 @@ bash scripts/install.sh install --enable-ssh
 `--enable-ssh` explicitly installs/enables the Debian SSH server and allows future
 successful pairings to receive SSH/SFTP access to **your user account**. It does
 not grant root or bypass sudo. Omit it for discovery/pairing without inbound SSH.
-To enable later, rerun installation with this option, unpair and pair again so the
-new SSH offer is exchanged.
+To enable later, rerun installation with this option, run explicit pair-server/pair again so the
+new SSH offer is exchanged. Explicit `pair` retries authenticate the code again
+even when the local side already has a matching pin.
 
 The installer prefers a unique USB Wi-Fi adapter and reuses saved NetworkManager
 credentials. Multiple choices require selection. It clones the selected profile
@@ -109,7 +110,9 @@ On Termux, use the discovered Debian name or full node ID:
 
 Leading zeroes in the code matter. Identical reported names are ambiguous: use the
 full ID shown by `status` or `paired`. A known name with a different identity needs
-pairing again. Incomplete enrollments stay pending and can be retried; a different
+pairing again. If one side reports success while the other fails, rerun explicit
+`pair-server` / `pair NAME`; a local record is not proof both commits completed.
+Incomplete enrollments stay pending and can be retried; a different
 key can never silently overwrite an existing pinned identity. Key rotation to a
 new node identity requires explicit new pairing; there is no automatic key rollover.
 
@@ -249,6 +252,7 @@ make unit-test
 make test
 make sanitize
 make ssh-test        # optional Linux-only real sshd test; normal account + passwordless sudo
+make namespace-test  # optional Linux network namespaces; passwordless sudo
 bash scripts/install.sh update
 bash scripts/install.sh uninstall
 ```

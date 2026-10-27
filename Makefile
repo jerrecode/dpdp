@@ -14,7 +14,7 @@ PAKE_LIB := build/vendor/boringssl/libcrypto.a
 SEC_OBJ := build/obj/security.o build/obj/pairing.o build/obj/access.o build/obj/pake_bridge.o
 TESTS := registry protocol identity security pairing authorization access
 TARGET := build/dpdp
-.PHONY: all clean test unit-test ssh-test sanitize
+.PHONY: all clean test unit-test ssh-test namespace-test sanitize
 all: $(TARGET)
 $(PAKE_LIB): scripts/build-pake.sh
 	bash scripts/build-pake.sh
@@ -37,6 +37,8 @@ test: $(TARGET) unit-test build/source_interface-test
 	./build/source_interface-test
 	bash tests/smoke.sh
 	bash tests/sleep_states.sh
+namespace-test: $(TARGET)
+	bash tests/network_namespaces.sh
 ssh-test: build/ssh_transport-test
 	python3 tests/ssh_transport.py
 sanitize:
