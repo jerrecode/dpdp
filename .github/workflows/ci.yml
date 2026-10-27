@@ -8,11 +8,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libjson-c-dev pkg-config make gcc python3 iproute2
+        run: sudo apt-get update && sudo apt-get install -y libjson-c-dev libgnutls28-dev cmake git pkg-config make gcc g++ openssh-client python3 iproute2
       - name: Build
         run: make
       - name: Validate installer syntax
-        run: bash -n scripts/install.sh scripts/diagnose.sh tests/smoke.sh tests/sleep_states.sh
+        run: bash -n scripts/install.sh scripts/diagnose.sh tests/smoke.sh tests/sleep_states.sh scripts/build-pake.sh
       - name: Integration test
         run: make test
       - name: Address and undefined behavior sanitizers

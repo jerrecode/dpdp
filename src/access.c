@@ -362,15 +362,19 @@ int access_command(sec_ctx *s, const char *action, const char *selector, int arg
     ARG("-o");
     ARG(controlopt);
     ARG("-o");
-    ARG(!strcmp(action,"master")?"ControlMaster=yes":"ControlMaster=auto");
+    ARG(!strcmp(action, "master") ? "ControlMaster=yes" : "ControlMaster=auto");
     ARG("-o");
-    ARG(!strcmp(action,"master")?"ControlPersist=no":"ControlPersist=60");
+    ARG(!strcmp(action, "master") ? "ControlPersist=no" : "ControlPersist=60");
     ARG("-i");
     ARG(clientkey);
     ARG(scp || !strcmp(action, "sftp") ? "-P" : "-p");
     ARG(number);
     char bindopt[48];
-    if(s->bind_ip[0]){snprintf(bindopt,sizeof bindopt,"BindAddress=%s",s->bind_ip);ARG("-o");ARG(bindopt);}
+    if (s->bind_ip[0]) {
+        snprintf(bindopt, sizeof bindopt, "BindAddress=%s", s->bind_ip);
+        ARG("-o");
+        ARG(bindopt);
+    }
     char remote[2048];
     if (scp) {
         if (argc != 2 || strlen(args[0]) > 1500 || strlen(args[1]) > 1500)

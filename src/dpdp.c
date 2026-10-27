@@ -618,7 +618,7 @@ static int open_socket(struct in_addr ip, int ifindex) {
     fd = s;
     cur_ifindex = ifindex;
     cur_ip = ip;
-    inet_ntop(AF_INET,&ip,security.bind_ip,sizeof security.bind_ip);
+    inet_ntop(AF_INET, &ip, security.bind_ip, sizeof security.bind_ip);
     return 0;
 }
 static void send_packet(char type, const struct sockaddr_in *dest) {
@@ -900,10 +900,65 @@ static int candidate(const char *selector, char id[33], char ip[16]) {
     struct in_addr address;
     return inet_pton(AF_INET, ip, &address) == 1 ? 0 : -1;
 }
+static int pairing_watch(void) {
+    if (!isatty(STDIN_FILENO) || !isatty(STDERR_FILENO)) {
+        message(
+            "error",
+            "pair-watch needs an interactive terminal; keep the boot daemon running separately");
+        return 1;
+    }
+    message("pairing assistant",
+            "watching discovered devices; names are labels, saved keys establish trust");
+    for (;;) {
+        struct in_addr local = {0};
+        if (phone_network() != 0 || interface_address(cfg.iface, &local)) {
+            poll(NULL, 0, 5000);
+            continue;
+        }
+        struct json_object *root = read_json(cfg.registry), *all = obj_field(root, "peers");
+        char id[33] = {0}, name[49] = {0}, ip[16] = {0};
+        if (all && json_object_is_type(all, json_type_object)) {
+            json_object_object_foreach(all, k, v) {
+                (void)k;
+                const char *candidate_id = str_field(v, "id");
+                if (!valid_id(candidate_id))
+                    continue;
+                struct json_object *known = sec_find(&security, candidate_id);
+                if (known) {
+                    json_object_put(known);
+                    continue;
+                }
+                int64_t seen = json_object_get_int64(obj_field(v, "last_seen_unix"));
+                int64_t age = (int64_t)time(NULL) - seen;
+                if (age < 0 || age > 90 || !json_object_get_boolean(obj_field(v, "online")))
+                    continue;
+                copy(id, sizeof id, candidate_id);
+                copy(name, sizeof name, str_field(v, "name"));
+                copy(ip, sizeof ip, str_field(v, "ip"));
+                break;
+            }
+        }
+        if (root)
+            json_object_put(root);
+        if (id[0]) {
+            char bind_ip[16];
+            inet_ntop(AF_INET, &local, bind_ip, sizeof bind_ip);
+            message("new device", name);
+            message("device ID", id);
+            int rc = sec_pair_cli(&security, !cfg.termux, bind_ip, ip, cfg.port + 1,
+                                  cfg.termux ? id : NULL);
+            if (rc) {
+                message("error", "pairing window ended; rerun pair-watch to try again");
+                return 1;
+            }
+        }
+        poll(NULL, 0, 5000);
+    }
+}
 static void usage(void) {
     puts("DPDP - paired LAN discovery and SSH access\n"
          "Usage: dpdp run|init|status|paired [--config FILE] [--interface IF]\n"
-         "       dpdp pair-server [--config FILE]\n"
+         "       dpdp pair-watch|pair-server [--config FILE]\n"
          "       dpdp pair NAME_OR_ID [--config FILE]\n"
          "       dpdp unpair NAME_OR_ID [--config FILE]\n"
          "       dpdp access-init HOST_ED25519_PUBLIC_KEY [SSH_PORT] [--config FILE]\n"
@@ -955,9 +1010,9 @@ int main(int argc, char **argv) {
         json_object_put(root);
         return 0;
     }
-    const char *actions[] = {"init",   "run",         "paired", "pair-server", "pair",
-                             "unpair", "access-init", "ssh",    "sftp",        "master",
-                             "send",   "receive",     "forward"};
+    const char *actions[] = {"init",   "run",    "paired",      "pair-server", "pair-watch",
+                             "pair",   "unpair", "access-init", "ssh",         "sftp",
+                             "master", "send",   "receive",     "forward"};
     int recognized = 0;
     for (unsigned i = 0; i < sizeof actions / sizeof actions[0]; i++)
         if (!strcmp(action, actions[i]))
@@ -982,6 +1037,8 @@ int main(int argc, char **argv) {
     }
     security_ready = 1;
     signal(SIGPIPE, SIG_IGN);
+    if (!strcmp(action, "pair-watch"))
+        return count ? 2 : pairing_watch();
     if (!strcmp(action, "paired")) {
         struct json_object *o = sec_pairs(&security);
         if (!o)
@@ -1023,7 +1080,7 @@ int main(int argc, char **argv) {
         }
         char bind_ip[16];
         inet_ntop(AF_INET, &local, bind_ip, sizeof bind_ip);
-        copy(security.bind_ip,sizeof security.bind_ip,bind_ip);
+        copy(security.bind_ip, sizeof security.bind_ip, bind_ip);
         int rc = -1;
         if (!strcmp(action, "pair-server") && count == 0)
             rc = sec_pair_cli(&security, 1, bind_ip, NULL, cfg.port + 1, NULL);
@@ -1098,7 +1155,7 @@ int main(int argc, char **argv) {
             next_check = mono_ms() + (uint64_t)wait * 1000;
             if (opened) {
                 next_announce = mono_ms();
-                next_secure = mono_ms() + 15000;
+                next_secure = mono_ms() + (cfg.announce_s < 15 ? cfg.announce_s : 15) * 1000;
                 changed_address_hints();
             }
         }
@@ -1110,7 +1167,7 @@ int main(int argc, char **argv) {
         if (fd >= 0 && mono_ms() >= next_secure) {
             if (sec_challenge(&security) == 0)
                 send_secure('Q', "-", NULL);
-            next_secure = mono_ms() + 15000;
+            next_secure = mono_ms() + (cfg.announce_s < 15 ? cfg.announce_s : 15) * 1000;
         }
         mark_lost();
         for (unsigned i = 0; i < peer_count; i++)

@@ -194,8 +194,10 @@ int sec_init(sec_ctx *s, const char *config, const char *id, const char *name) {
     char *raw = sec_read(path);
     if (raw) {
         struct stat permissions;
-        if(lstat(path,&permissions) || permissions.st_uid!=getuid() || (permissions.st_mode&077)){
-            free(raw);goto done;
+        if (lstat(path, &permissions) || permissions.st_uid != getuid() ||
+            (permissions.st_mode & 077)) {
+            free(raw);
+            goto done;
         }
         gnutls_datum_t pem = {(unsigned char *)raw, (unsigned)strlen(raw)};
         int err = gnutls_x509_privkey_import(x, &pem, GNUTLS_X509_FMT_PEM);
@@ -306,9 +308,10 @@ static struct json_object *find_in(struct json_object *root, const char *selecto
     if (!root || !json_object_object_get_ex(root, "peers", &all))
         return NULL;
     json_object_object_foreach(all, k, v) {
-        struct json_object *rev = NULL;
+        struct json_object *rev = NULL, *pending = NULL;
         json_object_object_get_ex(v, "revoked", &rev);
-        if (!include_revoked && json_object_get_boolean(rev))
+        json_object_object_get_ex(v, "pending", &pending);
+        if (!include_revoked && (json_object_get_boolean(rev) || json_object_get_boolean(pending)))
             continue;
         if (!strcmp(k, selector)) {
             return v;
@@ -316,9 +319,10 @@ static struct json_object *find_in(struct json_object *root, const char *selecto
     }
     json_object_object_foreach(all, key, value) {
         (void)key;
-        struct json_object *rev = NULL;
+        struct json_object *rev = NULL, *pending = NULL;
         json_object_object_get_ex(value, "revoked", &rev);
-        if (!include_revoked && json_object_get_boolean(rev))
+        json_object_object_get_ex(value, "pending", &pending);
+        if (!include_revoked && (json_object_get_boolean(rev) || json_object_get_boolean(pending)))
             continue;
         if (!strcmp(sec_str(value, "name"), selector)) {
             if (found)

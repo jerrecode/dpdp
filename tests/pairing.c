@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
-static void exchange(sec_ctx *a, sec_ctx *b, int correct) {
+static void exchange(sec_ctx *a, sec_ctx *b, int mode) {
     int fds[2];
     assert(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
     pid_t pid = fork();
@@ -15,12 +15,13 @@ static void exchange(sec_ctx *a, sec_ctx *b, int correct) {
         close(fds[0]);
         int rc = sec_pair_fd(a, fds[1], 1, "012345", NULL);
         close(fds[1]);
-        _exit((rc == 0) == correct ? 0 : 1);
+        _exit((rc == 0) == (mode == 1) ? 0 : 1);
     }
     close(fds[1]);
-    int rc = sec_pair_fd(b, fds[0], 0, correct ? "012345" : "012346", a->id);
+    int rc = sec_pair_fd(b, fds[0], 0, mode == 0 ? "012346" : "012345",
+                         mode == 2 ? "ffffffffffffffffffffffffffffffff" : a->id);
     close(fds[0]);
-    assert((rc == 0) == correct);
+    assert((rc == 0) == (mode == 1));
     int status;
     assert(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
@@ -35,6 +36,8 @@ int main(void) {
     snprintf(p, sizeof p, "%s/b", dir);
     assert(sec_init(&b, p, "00000000000000000000000000000002", "phone") == 0);
     exchange(&a, &b, 0);
+    assert(sec_find(&a, b.id) == NULL && sec_find(&b, a.id) == NULL);
+    exchange(&a, &b, 2);
     assert(sec_find(&a, b.id) == NULL && sec_find(&b, a.id) == NULL);
     exchange(&a, &b, 1);
     struct json_object *v = sec_find(&a, b.id);

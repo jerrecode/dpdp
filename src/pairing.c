@@ -104,7 +104,8 @@ static int valid_code(const char *s) {
             return 0;
     return 1;
 }
-static int pair_until(sec_ctx *s, int fd, int server, const char *code, const char *expected_id, uint64_t until) {
+static int pair_until(sec_ctx *s, int fd, int server, const char *code, const char *expected_id,
+                      uint64_t until) {
     if (!valid_code(code))
         return -1;
     int flags = fcntl(fd, F_GETFL);
@@ -199,6 +200,7 @@ static int pair_until(sec_ctx *s, int fd, int server, const char *code, const ch
     if (expected_id && strcmp(expected_id, sec_str(remote, "id")))
         goto done;
     stage = "pin identity";
+    json_object_object_add(remote, "pending", json_object_new_boolean(1));
     if (access_validate(remote) || sec_pin(s, remote))
         goto done;
     /* A partially committed exchange is recoverable by explicitly pairing again
@@ -208,6 +210,11 @@ static int pair_until(sec_ctx *s, int fd, int server, const char *code, const ch
     if (transfer(tls, fd, &ack, 1, 1, until) || transfer(tls, fd, &peer_ack, 1, 0, until) ||
         peer_ack != 'K' || access_grant(s, remote))
         goto done;
+    json_object_object_add(remote, "pending", json_object_new_boolean(0));
+    if (sec_pin(s, remote)) {
+        access_revoke(s, sec_str(remote, "id"));
+        goto done;
+    }
     fprintf(stderr, "Paired %s (%s)\n", sec_str(remote, "name"), sec_str(remote, "id"));
     rc = 0;
 done:
@@ -231,8 +238,8 @@ done:
         gnutls_psk_free_client_credentials(cc);
     return rc;
 }
-int sec_pair_fd(sec_ctx *s,int fd,int server,const char *code,const char *expected_id){
-    return pair_until(s,fd,server,code,expected_id,sec_now()+PAIR_MS);
+int sec_pair_fd(sec_ctx *s, int fd, int server, const char *code, const char *expected_id) {
+    return pair_until(s, fd, server, code, expected_id, sec_now() + PAIR_MS);
 }
 int sec_pair_cli(sec_ctx *s, int server, const char *bind_ip, const char *peer_ip, unsigned port,
                  const char *expected_id) {
@@ -278,8 +285,8 @@ int sec_pair_cli(sec_ctx *s, int server, const char *bind_ip, const char *peer_i
                 break;
             }
             fcntl(fd, F_SETFD, FD_CLOEXEC);
-            uint64_t attempt_end=sec_now()+PAIR_MS;
-            rc = pair_until(s,fd,1,code,NULL,attempt_end<until?attempt_end:until);
+            uint64_t attempt_end = sec_now() + PAIR_MS;
+            rc = pair_until(s, fd, 1, code, NULL, attempt_end < until ? attempt_end : until);
             close(fd);
             if (!rc)
                 break;
